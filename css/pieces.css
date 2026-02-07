@@ -1,0 +1,224 @@
+/* ========================================
+   SuperChess - Piece Styles
+   ======================================== */
+
+.piece {
+    font-size: calc(var(--cell-size) * 0.75);
+    line-height: 1;
+    text-shadow:
+        1px 1px 2px rgba(0, 0, 0, 0.5),
+        -1px -1px 2px rgba(255, 255, 255, 0.1);
+    cursor: grab;
+    user-select: none;
+    transition: transform var(--transition-fast), filter var(--transition-fast);
+    position: relative;
+    z-index: 10;
+}
+
+.piece:hover {
+    transform: scale(1.1);
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
+}
+
+.piece:active {
+    cursor: grabbing;
+    transform: scale(1.15);
+}
+
+/* SVG Piece Styles */
+.piece-svg {
+    width: calc(var(--cell-size) * 0.9);
+    height: calc(var(--cell-size) * 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.piece-svg svg {
+    width: 100%;
+    height: 100%;
+    filter: drop-shadow(1px 1px 2px rgba(0, 0, 0, 0.5));
+}
+
+/* Life Badge */
+.life-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: var(--color-success);
+    color: white;
+    font-size: 0.6rem;
+    padding: 1px 3px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+
+.piece.white {
+    filter:
+        drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.5)) drop-shadow(0 0 2px rgba(255, 255, 255, 0.3));
+}
+
+/* Black Pieces */
+.piece.black {
+    filter:
+        drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.8)) drop-shadow(0 0 3px rgba(0, 0, 0, 0.5));
+}
+
+/* Piece Icons - Using Unicode Chess Symbols as Base */
+/* These will be replaced by nation-specific icons */
+
+.piece[data-type="king"]::after,
+.piece[data-type="queen"]::after,
+.piece[data-type="rook"]::after,
+.piece[data-type="bishop"]::after,
+.piece[data-type="knight"]::after,
+.piece[data-type="pawn"]::after {
+    content: '';
+    position: absolute;
+    bottom: -5px;
+    right: -5px;
+    width: 16px;
+    height: 16px;
+    font-size: 12px;
+    background: var(--bg-card);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.piece:hover[data-type]::after {
+    opacity: 1;
+}
+
+/* Special Ability Indicator */
+.piece.has-ability::before {
+    content: '✦';
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    font-size: 0.8rem;
+    color: var(--color-primary);
+    text-shadow: 0 0 5px var(--color-primary);
+    animation: sparkle 2s ease-in-out infinite;
+}
+
+@keyframes sparkle {
+
+    0%,
+    100% {
+        opacity: 0.5;
+        transform: scale(0.8);
+    }
+
+    50% {
+        opacity: 1;
+        transform: scale(1.2);
+    }
+}
+
+/* Ability Used Indicator */
+.piece.ability-used::before {
+    content: '○';
+    color: var(--text-muted);
+    animation: none;
+}
+
+/* Disabled Piece (cannot move) */
+.piece.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    filter: grayscale(50%);
+}
+
+.piece.disabled:hover {
+    transform: none;
+}
+
+/* Selected Piece Glow */
+.cell.selected .piece {
+    filter:
+        drop-shadow(0 0 8px var(--color-primary)) drop-shadow(0 0 15px var(--color-primary));
+}
+
+/* Captured Piece (smaller, in captured list) */
+.captured-piece {
+    font-size: 1.2rem;
+    opacity: 0.8;
+    margin: 2px;
+}
+
+.captured-piece.white {
+    filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.3));
+}
+
+.captured-piece.black {
+    filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.8));
+}
+
+/* Piece Value Tooltip */
+.piece[data-value]::after {
+    content: attr(data-value);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--transition-fast);
+}
+
+.piece:hover[data-value]::after {
+    opacity: 1;
+}
+
+/* Promotion Dialog */
+.promotion-dialog {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--bg-card);
+    border: 2px solid var(--color-primary);
+    border-radius: 15px;
+    padding: 1.5rem;
+    z-index: 1000;
+    box-shadow: var(--shadow-lg);
+}
+
+.promotion-dialog h3 {
+    font-family: var(--font-title);
+    color: var(--color-primary);
+    text-align: center;
+    margin-bottom: 1rem;
+}
+
+.promotion-options {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+}
+
+.promotion-option {
+    font-size: 3rem;
+    padding: 0.5rem;
+    background: var(--bg-glass);
+    border: 2px solid transparent;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.promotion-option:hover {
+    border-color: var(--color-primary);
+    transform: scale(1.1);
+    background: rgba(201, 162, 39, 0.2);
+}

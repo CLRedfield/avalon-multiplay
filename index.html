@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="SuperChess - 多国象棋变体游戏，选择你的国家，挑战对手！">
+    <title>SuperChess - 多国象棋变体</title>
+    <link rel="stylesheet" href="css/main.css">
+    <link rel="stylesheet" href="css/board.css">
+    <link rel="stylesheet" href="css/pieces.css">
+    <link rel="stylesheet" href="css/nations.css">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap"
+        rel="stylesheet">
+</head>
+
+<body>
+    <div id="app">
+        <!-- 主菜单界面 -->
+        <div id="main-menu" class="screen active">
+            <div class="menu-container">
+                <h1 class="game-title">
+                    <span class="title-icon">♔</span>
+                    SuperChess
+                    <span class="title-icon">♚</span>
+                </h1>
+                <p class="subtitle">多国象棋变体</p>
+                <div class="menu-buttons">
+                    <button id="btn-start-game" class="menu-btn primary">
+                        <span class="btn-icon">⚔️</span>
+                        开始对战
+                    </button>
+                    <button id="btn-rules" class="menu-btn">
+                        <span class="btn-icon">📜</span>
+                        游戏规则
+                    </button>
+                    <button id="btn-nations" class="menu-btn">
+                        <span class="btn-icon">🏰</span>
+                        国家图鉴
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 国家选择界面 -->
+        <div id="nation-select" class="screen">
+            <div class="nation-select-container">
+                <h2>选择你的国家</h2>
+                <div class="player-select-wrapper">
+                    <div class="player-select" id="player1-select">
+                        <h3>玩家 1 (白方)</h3>
+                        <div class="nation-grid" id="nation-grid-1"></div>
+                    </div>
+                    <div class="vs-divider">VS</div>
+                    <div class="player-select" id="player2-select">
+                        <h3>玩家 2 (黑方)</h3>
+                        <div class="nation-grid" id="nation-grid-2"></div>
+                    </div>
+                </div>
+                <div class="nation-preview" id="nation-preview">
+                    <div class="preview-content">
+                        <h3 id="preview-name">选择一个国家</h3>
+                        <p id="preview-desc">点击国家图标查看详情</p>
+                        <div id="preview-pieces" class="preview-pieces"></div>
+                    </div>
+                </div>
+                <div class="select-buttons">
+                    <button id="btn-back-menu" class="menu-btn secondary">返回</button>
+                    <button id="btn-confirm-nations" class="menu-btn primary" disabled>确认开始</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 游戏界面 -->
+        <div id="game-screen" class="screen">
+            <div class="game-container">
+                <!-- 左侧信息面板 -->
+                <div class="side-panel left-panel">
+                    <div class="player-info" id="player2-info">
+                        <div class="player-flag" id="player2-flag"></div>
+                        <div class="player-details">
+                            <span class="player-name" id="player2-name">玩家 2</span>
+                            <span class="player-nation" id="player2-nation">国家</span>
+                        </div>
+                        <div class="player-timer" id="player2-timer">10:00</div>
+                    </div>
+                    <div class="captured-pieces" id="player1-captured"></div>
+
+                    <div class="divider"></div>
+
+                    <div class="player-info" id="player1-info">
+                        <div class="player-flag" id="player1-flag"></div>
+                        <div class="player-details">
+                            <span class="player-name" id="player1-name">玩家 1</span>
+                            <span class="player-nation" id="player1-nation">国家</span>
+                        </div>
+                        <div class="player-timer" id="player1-timer">10:00</div>
+                    </div>
+                    <div class="captured-pieces" id="player2-captured"></div>
+
+                    <div class="divider"></div>
+
+                    <!-- 国家特色兵种技能 -->
+                    <div class="nation-abilities-panel">
+                        <h4>⚔️ 国家特技</h4>
+                        <div id="nation-abilities-list" class="abilities-list"></div>
+                    </div>
+                </div>
+
+                <!-- 棋盘区域 -->
+                <div class="board-wrapper">
+                    <div class="board-container">
+                        <div id="chess-board" class="chess-board"></div>
+                    </div>
+                    <div class="game-status" id="game-status">白方回合</div>
+                </div>
+
+                <!-- 右侧面板 -->
+                <div class="side-panel right-panel">
+                    <div class="ability-panel">
+                        <h3>特殊能力</h3>
+                        <div id="ability-list" class="ability-list"></div>
+                    </div>
+                    <div class="move-history">
+                        <h3>移动记录</h3>
+                        <div id="move-list" class="move-list"></div>
+                    </div>
+                    <div class="game-controls">
+                        <button id="btn-surrender" class="control-btn danger">认输</button>
+                        <button id="btn-draw" class="control-btn">求和</button>
+                        <button id="btn-back-select" class="control-btn">返回</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 规则弹窗 -->
+        <div id="rules-modal" class="modal">
+            <div class="modal-content">
+                <span class="modal-close" id="rules-close">&times;</span>
+                <h2>游戏规则</h2>
+                <div class="rules-content">
+                    <h3>基础规则</h3>
+                    <p>SuperChess 基于标准国际象棋规则，但每个国家拥有独特的兵种和特殊能力。</p>
+                    <ul>
+                        <li>棋盘为 8×8 标准国际象棋棋盘</li>
+                        <li>胜利条件：将死对方国王</li>
+                        <li>双方交替行动</li>
+                        <li>每个国家有独特的特殊能力</li>
+                    </ul>
+                    <h3>特殊能力</h3>
+                    <p>每个棋子可能拥有特殊能力，使用次数有限。点击能力面板中的按钮激活能力。</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 国家图鉴弹窗 -->
+        <div id="nations-modal" class="modal">
+            <div class="modal-content large">
+                <span class="modal-close" id="nations-close">&times;</span>
+
+                <!-- 列表视图 -->
+                <div id="nations-list-view">
+                    <h2>国家图鉴</h2>
+                    <div id="nations-gallery" class="nations-gallery"></div>
+                </div>
+
+                <!-- 详情视图 -->
+                <div id="nations-detail-view" style="display: none; animation: fadeIn 0.3s ease;">
+                    <div class="detail-header"
+                        style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem;">
+                        <button id="btn-back-gallery" class="menu-btn secondary"
+                            style="padding: 0.5rem 1rem; font-size: 0.9rem;">← 返回列表</button>
+                        <h2 id="gallery-detail-title" style="margin: 0; flex: 1; text-align: center;">国家详情</h2>
+                        <div style="width: 80px;"></div> <!-- Spacer for centering -->
+                    </div>
+                    <div id="nation-detail-content"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 游戏结束弹窗 -->
+        <div id="game-over-modal" class="modal">
+            <div class="modal-content">
+                <h2 id="game-over-title">游戏结束</h2>
+                <p id="game-over-message"></p>
+                <div class="modal-buttons">
+                    <button id="btn-rematch" class="menu-btn primary">再来一局</button>
+                    <button id="btn-return-menu" class="menu-btn">返回主菜单</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="js/main.js"></script>
+</body>
+
+</html>

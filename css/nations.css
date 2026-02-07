@@ -1,0 +1,272 @@
+/* ========================================
+   SuperChess - Nation Styles
+   ======================================== */
+
+/* Nation Color Themes */
+.nation-france {
+    --nation-primary: #0055a4;
+    --nation-secondary: #ffffff;
+    --nation-accent: #ef4135;
+}
+
+.nation-england {
+    --nation-primary: #c8102e;
+    --nation-secondary: #ffffff;
+    --nation-accent: #012169;
+}
+
+.nation-holyroman {
+    --nation-primary: #000000;
+    --nation-secondary: #ffcc00;
+    --nation-accent: #ff0000;
+}
+
+.nation-china {
+    --nation-primary: #de2910;
+    --nation-secondary: #ffde00;
+    --nation-accent: #8b0000;
+}
+
+.nation-japan {
+    --nation-primary: #bc002d;
+    --nation-secondary: #ffffff;
+    --nation-accent: #1a1a1a;
+}
+
+.nation-ottoman {
+    --nation-primary: #e30a17;
+    --nation-secondary: #ffffff;
+    --nation-accent: #006233;
+}
+
+.nation-mongol {
+    --nation-primary: #0066b3;
+    --nation-secondary: #da2032;
+    --nation-accent: #f9cf02;
+}
+
+.nation-byzantine {
+    --nation-primary: #4b0082;
+    --nation-secondary: #ffd700;
+    --nation-accent: #800020;
+}
+
+.nation-spain {
+    --nation-primary: #c60b1e;
+    --nation-secondary: #ffc400;
+    --nation-accent: #7b2927;
+}
+
+.nation-poland {
+    --nation-primary: #dc143c;
+    --nation-secondary: #ffffff;
+    --nation-accent: #1e90ff;
+}
+
+.nation-rus {
+    --nation-primary: #0039a6;
+    --nation-secondary: #ffffff;
+    --nation-accent: #d52b1e;
+}
+
+/* Nation Flag Icons (Emoji-based for simplicity) */
+.nation-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Nation-specific Player Info Styling */
+.player-info[data-nation="france"] {
+    border-left: 4px solid #0055a4;
+}
+
+.player-info[data-nation="england"] {
+    border-left: 4px solid #c8102e;
+}
+
+.player-info[data-nation="holyroman"] {
+    border-left: 4px solid #ffcc00;
+}
+
+.player-info[data-nation="china"] {
+    border-left: 4px solid #de2910;
+}
+
+.player-info[data-nation="japan"] {
+    border-left: 4px solid #bc002d;
+}
+
+.player-info[data-nation="ottoman"] {
+    border-left: 4px solid #e30a17;
+}
+
+.player-info[data-nation="mongol"] {
+    border-left: 4px solid #0066b3;
+}
+
+.player-info[data-nation="byzantine"] {
+    border-left: 4px solid #4b0082;
+}
+
+.player-info[data-nation="spain"] {
+    border-left: 4px solid #c60b1e;
+}
+
+.player-info[data-nation="poland"] {
+    border-left: 4px solid #dc143c;
+}
+
+.player-info[data-nation="rus"] {
+    border-left: 4px solid #0039a6;
+}
+
+/* Nation Card Selected State Colors */
+.nation-card[data-nation="france"].selected {
+    border-color: #0055a4;
+    box-shadow: 0 0 15px rgba(0, 85, 164, 0.5);
+}
+
+.nation-card[data-nation="england"].selected {
+    border-color: #c8102e;
+    box-shadow: 0 0 15px rgba(200, 16, 46, 0.5);
+}
+
+.nation-card[data-nation="holyroman"].selected {
+    border-color: #ffcc00;
+    box-shadow: 0 0 15px rgba(255, 204, 0, 0.5);
+}
+
+.nation-card[data-nation="china"].selected {
+    border-color: #de2910;
+    box-shadow: 0 0 15px rgba(222, 41, 16, 0.5);
+}
+
+.nation-card[data-nation="japan"].selected {
+    border-color: #bc002d;
+    box-shadow: 0 0 15px rgba(188, 0, 45, 0.5);
+}
+
+.nation-card[data-nation="ottoman"].selected {
+    border-color: #e30a17;
+    box-shadow: 0 0 15px rgba(227, 10, 23, 0.5);
+}
+
+.nation-card[data-nation="mongol"].selected {
+    border-color: #0066b3;
+    box-shadow: 0 0 15px rgba(0, 102, 179, 0.5);
+}
+
+.nation-card[data-nation="byzantine"].selected {
+    border-color: #4b0082;
+    box-shadow: 0 0 15px rgba(75, 0, 130, 0.5);
+}
+
+.nation-card[data-nation="spain"].selected {
+    border-color: #c60b1e;
+    box-shadow: 0 0 15px rgba(198, 11, 30, 0.5);
+}
+
+.nation-card[data-nation="poland"].selected {
+    border-color: #dc143c;
+    box-shadow: 0 0 15px rgba(220, 20, 60, 0.5);
+}
+
+.nation-card[data-nation="rus"].selected {
+    border-color: #0039a6;
+    box-shadow: 0 0 15px rgba(0, 57, 166, 0.5);
+}
+
+/* Ability Buttons with Nation Colors */
+.ability-btn[data-nation="france"] {
+    border-left: 3px solid #0055a4;
+}
+
+.ability-btn[data-nation="england"] {
+    border-left: 3px solid #c8102e;
+}
+
+.ability-btn[data-nation="holyroman"] {
+    border-left: 3px solid #ffcc00;
+}
+
+.ability-btn[data-nation="china"] {
+    border-left: 3px solid #de2910;
+}
+
+.ability-btn[data-nation="japan"] {
+    border-left: 3px solid #bc002d;
+}
+
+.ability-btn[data-nation="ottoman"] {
+    border-left: 3px solid #e30a17;
+}
+
+.ability-btn[data-nation="mongol"] {
+    border-left: 3px solid #0066b3;
+}
+
+.ability-btn[data-nation="byzantine"] {
+    border-left: 3px solid #4b0082;
+}
+
+.ability-btn[data-nation="spain"] {
+    border-left: 3px solid #c60b1e;
+}
+
+.ability-btn[data-nation="poland"] {
+    border-left: 3px solid #dc143c;
+}
+
+.ability-btn[data-nation="rus"] {
+    border-left: 3px solid #0039a6;
+}
+
+/* Nation-themed Piece Glow Effects */
+.piece[data-nation="france"] {
+    --piece-glow: rgba(0, 85, 164, 0.5);
+}
+
+.piece[data-nation="england"] {
+    --piece-glow: rgba(200, 16, 46, 0.5);
+}
+
+.piece[data-nation="holyroman"] {
+    --piece-glow: rgba(255, 204, 0, 0.5);
+}
+
+.piece[data-nation="china"] {
+    --piece-glow: rgba(222, 41, 16, 0.5);
+}
+
+.piece[data-nation="japan"] {
+    --piece-glow: rgba(188, 0, 45, 0.5);
+}
+
+.piece[data-nation="ottoman"] {
+    --piece-glow: rgba(227, 10, 23, 0.5);
+}
+
+.piece[data-nation="mongol"] {
+    --piece-glow: rgba(0, 102, 179, 0.5);
+}
+
+.piece[data-nation="byzantine"] {
+    --piece-glow: rgba(75, 0, 130, 0.5);
+}
+
+.piece[data-nation="spain"] {
+    --piece-glow: rgba(198, 11, 30, 0.5);
+}
+
+.piece[data-nation="poland"] {
+    --piece-glow: rgba(220, 20, 60, 0.5);
+}
+
+.piece[data-nation="rus"] {
+    --piece-glow: rgba(0, 57, 166, 0.5);
+}
+
+.cell.selected .piece[data-nation] {
+    filter: drop-shadow(0 0 8px var(--piece-glow, var(--color-primary)));
+}
