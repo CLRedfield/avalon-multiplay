@@ -4,196 +4,291 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="SuperChess - 多国象棋变体游戏，选择你的国家，挑战对手！">
-    <title>SuperChess - 多国象棋变体</title>
-    <link rel="stylesheet" href="css/main.css">
-    <link rel="stylesheet" href="css/board.css">
-    <link rel="stylesheet" href="css/pieces.css">
-    <link rel="stylesheet" href="css/nations.css">
-    <link
-        href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap"
-        rel="stylesheet">
+    <meta name="description" content="Avalon - 多人在线投票推理游戏">
+    <title>Avalon - 阿瓦隆</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 </head>
 
 <body>
     <div id="app">
-        <!-- 主菜单界面 -->
-        <div id="main-menu" class="screen active">
-            <div class="menu-container">
-                <h1 class="game-title">
-                    <span class="title-icon">♔</span>
-                    SuperChess
-                    <span class="title-icon">♚</span>
-                </h1>
-                <p class="subtitle">多国象棋变体</p>
-                <div class="menu-buttons">
-                    <button id="btn-start-game" class="menu-btn primary">
-                        <span class="btn-icon">⚔️</span>
-                        开始对战
+        <!-- 首页 -->
+        <div id="home-view" class="view active">
+            <div class="container">
+                <div class="logo">
+                    <h1>🏰 Avalon</h1>
+                    <p class="subtitle">阿瓦隆 - 多人投票推理游戏</p>
+                </div>
+
+                <div class="glass card">
+                    <input type="text" id="player-name" placeholder="输入你的昵称" maxlength="12">
+                    <button id="create-room-btn" class="btn btn-primary">
+                        <span>创建房间</span>
                     </button>
-                    <button id="btn-rules" class="menu-btn">
-                        <span class="btn-icon">📜</span>
-                        游戏规则
-                    </button>
-                    <button id="btn-nations" class="menu-btn">
-                        <span class="btn-icon">🏰</span>
-                        国家图鉴
+
+                    <div class="divider"><span>或</span></div>
+
+                    <input type="text" id="room-code" placeholder="输入房间号" maxlength="4">
+                    <button id="join-room-btn" class="btn btn-secondary">
+                        <span>加入房间</span>
                     </button>
                 </div>
             </div>
         </div>
 
-        <!-- 国家选择界面 -->
-        <div id="nation-select" class="screen">
-            <div class="nation-select-container">
-                <h2>选择你的国家</h2>
-                <div class="player-select-wrapper">
-                    <div class="player-select" id="player1-select">
-                        <h3>玩家 1 (白方)</h3>
-                        <div class="nation-grid" id="nation-grid-1"></div>
+        <!-- 大厅 -->
+        <div id="lobby-view" class="view">
+            <div class="container">
+                <div class="room-header">
+                    <h2>房间</h2>
+                    <span id="display-room-code">----</span>
+                    <button id="copy-code-btn" class="btn-icon">📋</button>
+                </div>
+
+                <div class="glass card">
+                    <h3>玩家列表 <span id="player-count">(0/10)</span></h3>
+                    <ul id="player-list" class="player-list"></ul>
+                </div>
+
+                <!-- 房主面板 -->
+                <div id="host-panel" class="glass card" style="display: none;">
+                    <h4>中立角色池</h4>
+                    <p class="hint">至少选择一个，游戏会随机选择其一</p>
+                    <div class="role-toggles">
+                        <label class="toggle-item">
+                            <input type="checkbox" id="neutral-scapegoat" checked>
+                            <span class="toggle-label">🐑 替罪羊</span>
+                        </label>
+                        <label class="toggle-item">
+                            <input type="checkbox" id="neutral-armsdealer" checked>
+                            <span class="toggle-label">🔫 军火商</span>
+                        </label>
+                        <label class="toggle-item">
+                            <input type="checkbox" id="neutral-cultist" checked>
+                            <span class="toggle-label">🔥 狂热者</span>
+                        </label>
                     </div>
-                    <div class="vs-divider">VS</div>
-                    <div class="player-select" id="player2-select">
-                        <h3>玩家 2 (黑方)</h3>
-                        <div class="nation-grid" id="nation-grid-2"></div>
+                    <button id="start-game-btn" class="btn btn-success" disabled>
+                        <span>开始游戏 (需要5人)</span>
+                    </button>
+                </div>
+
+                <!-- 非房主面板 -->
+                <div id="guest-panel" class="glass card" style="display: none;">
+                    <p class="waiting-text">等待房主开始游戏...</p>
+                </div>
+
+                <button id="leave-room-btn" class="btn btn-secondary">
+                    <span>退出房间</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 角色查看 -->
+        <div id="role-view" class="view">
+            <div class="container">
+                <div class="role-reveal">
+                    <div id="my-role-card" class="glass role-card">
+                        <div id="role-icon" class="role-icon">❓</div>
+                        <h2 id="role-name">点击查看身份</h2>
+                        <p id="role-description" class="role-desc"></p>
+                        <div id="role-info" class="role-info"></div>
+                    </div>
+                    <button id="ready-btn" class="btn btn-primary" style="display: none; margin-top: 20px;">
+                        <span>我已记住，准备开始</span>
+                    </button>
+                </div>
+
+                <div id="ready-status" class="glass card"></div>
+                <p id="ready-progress" style="text-align: center; color: var(--text-secondary);"></p>
+            </div>
+        </div>
+
+        <!-- 游戏主界面 -->
+        <div id="game-view" class="view">
+            <div class="container">
+                <!-- 任务进度 -->
+                <div class="mission-track">
+                    <div id="mission-1" class="mission"><span>2</span></div>
+                    <div id="mission-2" class="mission"><span>3</span></div>
+                    <div id="mission-3" class="mission"><span>2</span></div>
+                    <div id="mission-4" class="mission"><span>3</span></div>
+                    <div id="mission-5" class="mission"><span>3</span></div>
+                </div>
+
+                <!-- 否决次数 -->
+                <div class="reject-track">
+                    <span>否决:</span>
+                    <div class="reject-markers">
+                        <div id="reject-1" class="reject-marker"></div>
+                        <div id="reject-2" class="reject-marker"></div>
+                        <div id="reject-3" class="reject-marker"></div>
+                        <div id="reject-4" class="reject-marker"></div>
+                        <div id="reject-5" class="reject-marker"></div>
                     </div>
                 </div>
-                <div class="nation-preview" id="nation-preview">
-                    <div class="preview-content">
-                        <h3 id="preview-name">选择一个国家</h3>
-                        <p id="preview-desc">点击国家图标查看详情</p>
-                        <div id="preview-pieces" class="preview-pieces"></div>
-                    </div>
+
+                <!-- 游戏状态 -->
+                <div class="glass card game-status">
+                    <p id="game-status-text">队长选择队伍</p>
+                    <p id="captain-info" class="captain-info"></p>
                 </div>
-                <div class="select-buttons">
-                    <button id="btn-back-menu" class="menu-btn secondary">返回</button>
-                    <button id="btn-confirm-nations" class="menu-btn primary" disabled>确认开始</button>
+
+                <!-- 玩家区域 -->
+                <div id="game-players" class="game-players"></div>
+
+                <!-- 操作面板 -->
+                <div id="action-panel" class="glass card action-panel"></div>
+
+                <!-- 审判官按钮 -->
+                <button id="inquisitor-btn" class="inquisitor-btn" style="display: none;">
+                    🔍 使用审判官技能
+                </button>
+            </div>
+        </div>
+
+        <!-- 投票界面 -->
+        <div id="vote-view" class="view">
+            <div class="container">
+                <div class="glass card vote-card">
+                    <h2 id="vote-title">队伍表决</h2>
+                    <p id="vote-description">是否同意此次任务队伍出发？</p>
+                    <div id="vote-team" class="vote-team"></div>
+                    <div class="vote-buttons">
+                        <button id="vote-approve" class="btn btn-success">
+                            <span>👍 赞成</span>
+                        </button>
+                        <button id="vote-reject" class="btn btn-danger">
+                            <span>👎 反对</span>
+                        </button>
+                    </div>
+                    <div id="vote-waiting" class="vote-waiting" style="display: none;">
+                        <p>等待其他玩家投票...</p>
+                        <p class="vote-progress"><span id="votes-cast">0</span>/<span id="votes-total">0</span></p>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- 游戏界面 -->
-        <div id="game-screen" class="screen">
-            <div class="game-container">
-                <!-- 左侧信息面板 -->
-                <div class="side-panel left-panel">
-                    <div class="player-info" id="player2-info">
-                        <div class="player-flag" id="player2-flag"></div>
-                        <div class="player-details">
-                            <span class="player-name" id="player2-name">玩家 2</span>
-                            <span class="player-nation" id="player2-nation">国家</span>
+        <!-- 投票结果 -->
+        <div id="vote-result-view" class="view">
+            <div class="container">
+                <div class="glass card vote-result-card">
+                    <h2>投票结果</h2>
+                    <p id="vote-result-status"></p>
+                    <div class="vote-result-lists">
+                        <div class="vote-result-column approve">
+                            <h4>👍 赞成</h4>
+                            <ul id="vote-approve-list"></ul>
                         </div>
-                        <div class="player-timer" id="player2-timer">10:00</div>
-                    </div>
-                    <div class="captured-pieces" id="player1-captured"></div>
-
-                    <div class="divider"></div>
-
-                    <div class="player-info" id="player1-info">
-                        <div class="player-flag" id="player1-flag"></div>
-                        <div class="player-details">
-                            <span class="player-name" id="player1-name">玩家 1</span>
-                            <span class="player-nation" id="player1-nation">国家</span>
+                        <div class="vote-result-column reject">
+                            <h4>👎 反对</h4>
+                            <ul id="vote-reject-list"></ul>
                         </div>
-                        <div class="player-timer" id="player1-timer">10:00</div>
                     </div>
-                    <div class="captured-pieces" id="player2-captured"></div>
-
-                    <div class="divider"></div>
-
-                    <!-- 国家特色兵种技能 -->
-                    <div class="nation-abilities-panel">
-                        <h4>⚔️ 国家特技</h4>
-                        <div id="nation-abilities-list" class="abilities-list"></div>
-                    </div>
-                </div>
-
-                <!-- 棋盘区域 -->
-                <div class="board-wrapper">
-                    <div class="board-container">
-                        <div id="chess-board" class="chess-board"></div>
-                    </div>
-                    <div class="game-status" id="game-status">白方回合</div>
-                </div>
-
-                <!-- 右侧面板 -->
-                <div class="side-panel right-panel">
-                    <div class="ability-panel">
-                        <h3>特殊能力</h3>
-                        <div id="ability-list" class="ability-list"></div>
-                    </div>
-                    <div class="move-history">
-                        <h3>移动记录</h3>
-                        <div id="move-list" class="move-list"></div>
-                    </div>
-                    <div class="game-controls">
-                        <button id="btn-surrender" class="control-btn danger">认输</button>
-                        <button id="btn-draw" class="control-btn">求和</button>
-                        <button id="btn-back-select" class="control-btn">返回</button>
+                    <div class="vote-countdown">
+                        <span id="vote-countdown-num">10</span> 秒后继续...
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- 规则弹窗 -->
-        <div id="rules-modal" class="modal">
+        <!-- 任务界面 -->
+        <div id="mission-view" class="view">
+            <div class="container">
+                <div class="glass card mission-card">
+                    <h2>🎯 执行任务</h2>
+                    <p id="mission-instruction">你正在执行此次任务</p>
+                    <div class="mission-buttons">
+                        <button id="mission-success" class="btn btn-success">
+                            <span>✅ 任务成功</span>
+                        </button>
+                        <button id="mission-fail" class="btn btn-danger">
+                            <span>❌ 破坏任务</span>
+                        </button>
+                    </div>
+                    <div id="mission-waiting" class="vote-waiting" style="display: none;">
+                        <p>等待任务队员完成任务...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 放逐会议 -->
+        <div id="tribunal-view" class="view">
+            <div class="container">
+                <div class="glass card tribunal-card">
+                    <h2>⚖️ 放逐会议</h2>
+                    <p id="tribunal-phase">选择一名玩家进行放逐</p>
+                    <div id="tribunal-players" class="tribunal-players"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 刺客界面 -->
+        <div id="assassin-view" class="view">
+            <div class="container">
+                <div class="glass card assassin-card">
+                    <h2>🗡️ 刺客行动</h2>
+                    <p id="assassin-instruction"></p>
+                    <div id="assassin-targets" class="assassin-targets"></div>
+                    <div id="assassin-waiting" class="vote-waiting" style="display: none;">
+                        <p>等待刺客选择目标...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 游戏结果 -->
+        <div id="result-view" class="view">
+            <div class="container">
+                <div class="glass card result-card">
+                    <h2 id="result-title">游戏结束</h2>
+                    <p id="result-description"></p>
+                    <div id="all-roles" class="all-roles"></div>
+                    <div id="neutral-results" class="neutral-results"></div>
+                    <button id="back-to-lobby" class="btn btn-primary" style="margin-top: 20px;">
+                        <span>返回大厅</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 角色信息面板（固定悬浮） -->
+        <div id="role-info-panel" class="role-info-panel" style="display: none;">
+            <div class="role-info-header" onclick="App.toggleRolePanel()">
+                <span id="role-panel-icon">?</span>
+                <span id="role-panel-name">角色</span>
+            </div>
+            <div class="role-info-body">
+                <p id="role-panel-desc"></p>
+            </div>
+        </div>
+
+        <!-- Toast 提示 -->
+        <div id="toast" class="toast"></div>
+
+        <!-- 审判官弹窗 -->
+        <div id="inquisitor-modal" class="modal" style="display: none;">
             <div class="modal-content">
-                <span class="modal-close" id="rules-close">&times;</span>
-                <h2>游戏规则</h2>
-                <div class="rules-content">
-                    <h3>基础规则</h3>
-                    <p>SuperChess 基于标准国际象棋规则，但每个国家拥有独特的兵种和特殊能力。</p>
-                    <ul>
-                        <li>棋盘为 8×8 标准国际象棋棋盘</li>
-                        <li>胜利条件：将死对方国王</li>
-                        <li>双方交替行动</li>
-                        <li>每个国家有独特的特殊能力</li>
-                    </ul>
-                    <h3>特殊能力</h3>
-                    <p>每个棋子可能拥有特殊能力，使用次数有限。点击能力面板中的按钮激活能力。</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- 国家图鉴弹窗 -->
-        <div id="nations-modal" class="modal">
-            <div class="modal-content large">
-                <span class="modal-close" id="nations-close">&times;</span>
-
-                <!-- 列表视图 -->
-                <div id="nations-list-view">
-                    <h2>国家图鉴</h2>
-                    <div id="nations-gallery" class="nations-gallery"></div>
-                </div>
-
-                <!-- 详情视图 -->
-                <div id="nations-detail-view" style="display: none; animation: fadeIn 0.3s ease;">
-                    <div class="detail-header"
-                        style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem;">
-                        <button id="btn-back-gallery" class="menu-btn secondary"
-                            style="padding: 0.5rem 1rem; font-size: 0.9rem;">← 返回列表</button>
-                        <h2 id="gallery-detail-title" style="margin: 0; flex: 1; text-align: center;">国家详情</h2>
-                        <div style="width: 80px;"></div> <!-- Spacer for centering -->
-                    </div>
-                    <div id="nation-detail-content"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 游戏结束弹窗 -->
-        <div id="game-over-modal" class="modal">
-            <div class="modal-content">
-                <h2 id="game-over-title">游戏结束</h2>
-                <p id="game-over-message"></p>
-                <div class="modal-buttons">
-                    <button id="btn-rematch" class="menu-btn primary">再来一局</button>
-                    <button id="btn-return-menu" class="menu-btn">返回主菜单</button>
-                </div>
+                <h3>🔍 选择查看目标</h3>
+                <p>选择一名玩家，查看其上一轮的任务投票</p>
+                <div id="inquisitor-targets" class="inquisitor-targets"></div>
+                <button id="inquisitor-cancel" class="btn btn-secondary" style="margin-top: 16px;">取消</button>
             </div>
         </div>
     </div>
 
-    <script type="module" src="js/main.js"></script>
+    <!-- Scripts -->
+    <script src="js/firebase-config.js"></script>
+    <script src="js/roles.js"></script>
+    <script src="js/room-manager.js"></script>
+    <script src="js/game.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/app.js"></script>
 </body>
 
 </html>

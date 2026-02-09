@@ -1,0 +1,997 @@
+/* ===== CSS Variables - Light Theme ===== */
+:root {
+    --bg-light: #f8fafc;
+    --bg-card: rgba(255, 255, 255, 0.95);
+    --bg-glass: rgba(255, 255, 255, 0.85);
+    --text-primary: #1e293b;
+    --text-secondary: rgba(30, 41, 59, 0.7);
+    --text-muted: rgba(30, 41, 59, 0.5);
+    --accent-blue: #3b82f6;
+    --accent-purple: #8b5cf6;
+    --accent-green: #10b981;
+    --accent-red: #ef4444;
+    --accent-gold: #f59e0b;
+    --good-color: #3b82f6;
+    --evil-color: #dc2626;
+    --neutral-color: #8b5cf6;
+    --border-color: rgba(30, 41, 59, 0.1);
+    --shadow-soft: 0 4px 20px rgba(0, 0, 0, 0.08);
+    --shadow-glow: 0 0 30px rgba(59, 130, 246, 0.2);
+}
+
+/* ===== Reset & Base ===== */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,
+body {
+    height: 100%;
+    font-family: 'Noto Sans SC', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-light);
+    color: var(--text-primary);
+    overflow-x: hidden;
+}
+
+body {
+    background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 50%, #f0f9ff 100%);
+    background-attachment: fixed;
+}
+
+body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background:
+        radial-gradient(circle at 20% 80%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(139, 92, 246, 0.08) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+#app {
+    position: relative;
+    z-index: 1;
+    min-height: 100%;
+}
+
+/* ===== Views ===== */
+.view {
+    display: none;
+    min-height: 100vh;
+    padding: 20px;
+    animation: fadeIn 0.3s ease;
+}
+
+.view.active {
+    display: block;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.container {
+    max-width: 480px;
+    margin: 0 auto;
+}
+
+/* ===== Glass Card ===== */
+.glass {
+    background: var(--bg-glass);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: var(--shadow-soft);
+}
+
+.card {
+    padding: 24px;
+    margin-bottom: 16px;
+}
+
+/* ===== Logo ===== */
+.logo {
+    text-align: center;
+    padding: 60px 0 40px;
+}
+
+.logo h1 {
+    font-size: 3rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-purple) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    color: var(--text-secondary);
+    font-size: 1rem;
+}
+
+/* ===== Form Elements ===== */
+input[type="text"] {
+    width: 100%;
+    padding: 16px 20px;
+    background: rgba(255, 255, 255, 0.8);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    color: var(--text-primary);
+    font-size: 1rem;
+    margin-bottom: 12px;
+    transition: all 0.3s ease;
+}
+
+input[type="text"]:focus {
+    outline: none;
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 15px rgba(59, 130, 246, 0.15);
+}
+
+input[type="text"]::placeholder {
+    color: var(--text-muted);
+}
+
+/* ===== Buttons ===== */
+.btn {
+    width: 100%;
+    padding: 16px 24px;
+    border: none;
+    border-radius: 12px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-purple) 100%);
+    color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 30px rgba(59, 130, 246, 0.3);
+}
+
+.btn-secondary {
+    background: rgba(30, 41, 59, 0.05);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: rgba(30, 41, 59, 0.1);
+}
+
+.btn-success {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: white;
+}
+
+.btn-danger {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+    color: white;
+}
+
+.btn-icon {
+    width: auto;
+    padding: 8px 12px;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1.2rem;
+}
+
+.divider {
+    display: flex;
+    align-items: center;
+    margin: 20px 0;
+    color: var(--text-muted);
+}
+
+.divider::before,
+.divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border-color);
+}
+
+.divider span {
+    padding: 0 16px;
+    font-size: 0.875rem;
+}
+
+/* ===== Room Header ===== */
+.room-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.room-header h2 {
+    font-size: 1.5rem;
+}
+
+.room-header span {
+    font-family: monospace;
+    letter-spacing: 2px;
+    color: var(--accent-gold);
+    font-weight: 700;
+}
+
+/* ===== Player List ===== */
+.player-list {
+    list-style: none;
+}
+
+.player-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: rgba(30, 41, 59, 0.03);
+    border-radius: 10px;
+    margin-bottom: 8px;
+}
+
+.player-list li.host::after {
+    content: '👑 房主';
+    font-size: 0.8rem;
+    color: var(--accent-gold);
+}
+
+.player-list li.me {
+    border: 2px solid var(--accent-blue);
+    background: rgba(59, 130, 246, 0.05);
+}
+
+.player-list li.exiled {
+    opacity: 0.4;
+    text-decoration: line-through;
+}
+
+/* ===== Role Toggles ===== */
+.role-toggles {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 16px 0;
+}
+
+.toggle-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: rgba(30, 41, 59, 0.03);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.toggle-item:hover {
+    background: rgba(30, 41, 59, 0.06);
+}
+
+.toggle-item input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--accent-purple);
+}
+
+.toggle-label {
+    font-size: 1rem;
+}
+
+.hint {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+}
+
+.waiting-text {
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+}
+
+/* ===== Role Card ===== */
+.role-reveal {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 0;
+}
+
+.role-card {
+    width: 100%;
+    max-width: 320px;
+    padding: 40px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border: 2px solid var(--border-color);
+}
+
+.role-card:hover {
+    transform: scale(1.02);
+}
+
+.role-card.revealed {
+    cursor: default;
+}
+
+.role-icon {
+    font-size: 4rem;
+    margin-bottom: 16px;
+}
+
+.role-desc {
+    color: var(--text-secondary);
+    margin: 16px 0;
+    font-size: 0.95rem;
+    line-height: 1.6;
+}
+
+.role-info {
+    margin-top: 20px;
+    padding: 16px;
+    background: rgba(30, 41, 59, 0.05);
+    border-radius: 10px;
+    text-align: left;
+    font-size: 0.9rem;
+    line-height: 1.8;
+}
+
+.role-info:empty {
+    display: none;
+}
+
+.role-card.good {
+    border-color: var(--good-color);
+    background: rgba(59, 130, 246, 0.05);
+}
+
+.role-card.evil {
+    border-color: var(--evil-color);
+    background: rgba(239, 68, 68, 0.05);
+}
+
+.role-card.neutral {
+    border-color: var(--neutral-color);
+    background: rgba(139, 92, 246, 0.05);
+}
+
+/* ===== Mission Track ===== */
+.mission-track {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.mission {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: rgba(30, 41, 59, 0.05);
+    border: 2px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 1.1rem;
+    position: relative;
+}
+
+.mission.current {
+    border-color: var(--accent-gold);
+    box-shadow: 0 0 15px rgba(245, 158, 11, 0.3);
+}
+
+.mission.success {
+    background: var(--good-color);
+    border-color: var(--good-color);
+    color: white;
+}
+
+.mission.fail {
+    background: var(--evil-color);
+    border-color: var(--evil-color);
+    color: white;
+}
+
+.mission .team-size {
+    position: absolute;
+    bottom: -20px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* ===== Reject Track ===== */
+.reject-track {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-bottom: 20px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.reject-markers {
+    display: flex;
+    gap: 6px;
+}
+
+.reject-marker {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: rgba(30, 41, 59, 0.1);
+    border: 1px solid var(--border-color);
+}
+
+.reject-marker.active {
+    background: var(--accent-red);
+    border-color: var(--accent-red);
+}
+
+/* ===== Game Status ===== */
+.game-status {
+    text-align: center;
+    padding: 16px;
+}
+
+#game-status-text {
+    font-size: 1.1rem;
+    margin-bottom: 8px;
+}
+
+.captain-info {
+    font-size: 0.9rem;
+    color: var(--accent-gold);
+    font-weight: 600;
+}
+
+/* ===== Game Players ===== */
+.game-players {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin: 16px 0;
+}
+
+.game-player {
+    padding: 16px 12px;
+    background: var(--bg-glass);
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    text-align: center;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.game-player:hover {
+    border-color: var(--accent-blue);
+}
+
+.game-player.captain {
+    border-color: var(--accent-gold);
+    background: rgba(245, 158, 11, 0.08);
+}
+
+.game-player.selected {
+    border-color: var(--accent-blue);
+    background: rgba(59, 130, 246, 0.1);
+}
+
+.game-player.on-team {
+    border-color: var(--accent-green);
+    background: rgba(16, 185, 129, 0.1);
+}
+
+.game-player.exiled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
+.game-player .player-name {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.game-player .player-tag {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+/* ===== Action Panel ===== */
+.action-panel {
+    min-height: 100px;
+    padding: 20px;
+}
+
+.action-panel .btn {
+    margin-top: 12px;
+}
+
+.action-choice {
+    display: flex;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.action-choice .btn {
+    flex: 1;
+}
+
+/* ===== Vote View ===== */
+.vote-card {
+    text-align: center;
+}
+
+.vote-card h2 {
+    margin-bottom: 12px;
+}
+
+.vote-team {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin: 20px 0;
+}
+
+.vote-team .team-member {
+    padding: 8px 16px;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid var(--accent-blue);
+    border-radius: 20px;
+    font-size: 0.9rem;
+}
+
+.vote-buttons {
+    display: flex;
+    gap: 16px;
+    margin-top: 24px;
+}
+
+.vote-buttons .btn {
+    flex: 1;
+}
+
+.vote-waiting {
+    margin-top: 24px;
+    color: var(--text-secondary);
+}
+
+.vote-progress {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-top: 8px;
+    color: var(--accent-blue);
+}
+
+/* ===== Vote Result View ===== */
+.vote-result-card {
+    text-align: center;
+}
+
+.vote-result-card h2 {
+    margin-bottom: 12px;
+}
+
+.vote-result-lists {
+    display: flex;
+    gap: 16px;
+    margin: 24px 0;
+}
+
+.vote-result-column {
+    flex: 1;
+    padding: 16px;
+    background: rgba(30, 41, 59, 0.03);
+    border-radius: 12px;
+}
+
+.vote-result-column.approve {
+    border: 2px solid var(--accent-green);
+}
+
+.vote-result-column.reject {
+    border: 2px solid var(--accent-red);
+}
+
+.vote-result-column h4 {
+    margin-bottom: 12px;
+    font-size: 1rem;
+}
+
+.vote-result-column ul {
+    list-style: none;
+    text-align: left;
+}
+
+.vote-result-column li {
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    background: rgba(255, 255, 255, 0.5);
+    border-radius: 6px;
+}
+
+.vote-countdown {
+    margin-top: 20px;
+    font-size: 1.2rem;
+    color: var(--text-secondary);
+}
+
+.vote-countdown span {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--accent-gold);
+}
+
+/* ===== Mission View ===== */
+.mission-card {
+    text-align: center;
+}
+
+.mission-buttons {
+    display: flex;
+    gap: 16px;
+    margin-top: 24px;
+}
+
+.mission-buttons .btn {
+    flex: 1;
+}
+
+/* ===== Tribunal View ===== */
+.tribunal-card {
+    text-align: center;
+}
+
+.tribunal-players {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin: 20px 0;
+}
+
+.tribunal-player {
+    padding: 16px;
+    background: rgba(30, 41, 59, 0.03);
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tribunal-player:hover {
+    border-color: var(--accent-red);
+}
+
+.tribunal-player.voted {
+    border-color: var(--accent-red);
+    background: rgba(239, 68, 68, 0.1);
+}
+
+.tribunal-player .vote-count {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--accent-red);
+    margin-top: 8px;
+}
+
+/* ===== Assassin View ===== */
+.assassin-card {
+    text-align: center;
+}
+
+.assassin-targets {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin: 20px 0;
+}
+
+.assassin-target {
+    padding: 20px;
+    background: rgba(30, 41, 59, 0.03);
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.assassin-target:hover {
+    border-color: var(--evil-color);
+    transform: scale(1.02);
+}
+
+/* ===== Result View ===== */
+.result-card {
+    text-align: center;
+}
+
+.result-card h2 {
+    font-size: 2rem;
+    margin-bottom: 16px;
+}
+
+.result-card.good-win h2 {
+    color: var(--good-color);
+}
+
+.result-card.evil-win h2 {
+    color: var(--evil-color);
+}
+
+.all-roles {
+    margin: 24px 0;
+    text-align: left;
+}
+
+.all-roles .role-reveal-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: rgba(30, 41, 59, 0.03);
+    border-radius: 10px;
+    margin-bottom: 8px;
+}
+
+.role-reveal-item .role-tag {
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    color: white;
+}
+
+.role-tag.good {
+    background: var(--good-color);
+}
+
+.role-tag.evil {
+    background: var(--evil-color);
+}
+
+.role-tag.neutral {
+    background: var(--neutral-color);
+}
+
+.neutral-results {
+    margin: 20px 0;
+    padding: 16px;
+    background: rgba(139, 92, 246, 0.08);
+    border: 1px solid var(--neutral-color);
+    border-radius: 12px;
+}
+
+.neutral-results:empty {
+    display: none;
+}
+
+/* ===== Inquisitor Button ===== */
+.inquisitor-btn {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 12px 20px;
+    background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+    border: none;
+    border-radius: 30px;
+    color: white;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
+    z-index: 100;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.05);
+    }
+}
+
+.inquisitor-btn:disabled {
+    opacity: 0.5;
+    animation: none;
+}
+
+/* ===== Role Info Panel ===== */
+.role-info-panel {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    max-width: 200px;
+    background: var(--bg-glass);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: var(--shadow-soft);
+    z-index: 100;
+    overflow: hidden;
+}
+
+.role-info-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    cursor: pointer;
+    font-weight: 600;
+    border-left: 4px solid var(--accent-blue);
+}
+
+.role-info-body {
+    padding: 0 16px 12px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+/* ===== Modal ===== */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    padding: 20px;
+}
+
+.modal-content {
+    width: 100%;
+    max-width: 400px;
+    padding: 24px;
+    text-align: center;
+    background: var(--bg-card);
+    border-radius: 16px;
+    box-shadow: var(--shadow-soft);
+}
+
+.modal-content h3 {
+    margin-bottom: 12px;
+}
+
+#inquisitor-targets {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin: 20px 0;
+}
+
+#inquisitor-targets .btn {
+    padding: 12px;
+}
+
+/* ===== Toast ===== */
+.toast {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    padding: 12px 24px;
+    background: var(--text-primary);
+    border-radius: 8px;
+    color: white;
+    font-size: 0.9rem;
+    opacity: 0;
+    transition: all 0.3s ease;
+    z-index: 300;
+}
+
+.toast.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+}
+
+/* ===== Ready Status ===== */
+.ready-card {
+    margin-top: 20px;
+}
+
+.ready-card h3 {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.ready-card h3 span {
+    font-size: 0.9rem;
+    color: var(--accent-green);
+}
+
+#ready-status {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    padding: 16px;
+}
+
+.ready-player {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: rgba(30, 41, 59, 0.03);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    transition: all 0.3s ease;
+}
+
+.ready-player.ready {
+    border-color: var(--accent-green);
+    background: rgba(16, 185, 129, 0.08);
+}
+
+.ready-icon {
+    font-size: 1.2rem;
+}
+
+.ready-name {
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 360px) {
+    .logo h1 {
+        font-size: 2.5rem;
+    }
+
+    .mission {
+        width: 40px;
+        height: 40px;
+    }
+
+    .game-players {
+        grid-template-columns: 1fr;
+    }
+}

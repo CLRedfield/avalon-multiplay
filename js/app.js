@@ -244,7 +244,7 @@ const App = {
 
         document.getElementById('role-panel-icon').textContent = role.icon || '?';
         document.getElementById('role-panel-name').textContent = role.name || '未知';
-        document.getElementById('role-panel-desc').textContent = role.desc || '';
+        document.getElementById('role-panel-desc').textContent = role.description || '';
 
         // 根据阵营设置颜色
         const header = panel.querySelector('.role-info-header');
@@ -306,7 +306,7 @@ window.onPlayersChange = (players) => {
             // 所有人准备好，自动进入游戏（由房主触发）
             if (RoomManager.isHost) {
                 console.log('[DEBUG] Host setting phase to selectTeam');
-                RoomManager.roomRef.child('game/phase').set('selectTeam');
+                RoomManager.roomRef.child('game/phase').set('captainChoice');
             }
         }
     }
