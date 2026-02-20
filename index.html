@@ -190,7 +190,7 @@
                         </div>
                     </div>
                     <div class="vote-countdown">
-                        <span id="vote-countdown-num">10</span> 秒后继续...
+                        <span id="vote-countdown-num">5</span> 秒后继续...
                     </div>
                 </div>
             </div>
@@ -212,6 +212,29 @@
                     </div>
                     <div id="mission-waiting" class="vote-waiting" style="display: none;">
                         <p>等待任务队员完成任务...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 任务结果 -->
+        <div id="mission-result-view" class="view">
+            <div class="container">
+                <div class="glass card mission-result-card">
+                    <h2 id="mission-result-title">任务结果</h2>
+                    <p id="mission-result-status"></p>
+                    <div class="vote-result-lists">
+                        <div class="vote-result-column approve">
+                            <h4>✅ 成功</h4>
+                            <p id="mission-success-count" class="mission-result-num">0</p>
+                        </div>
+                        <div class="vote-result-column reject">
+                            <h4>❌ 失败</h4>
+                            <p id="mission-fail-count" class="mission-result-num">0</p>
+                        </div>
+                    </div>
+                    <div class="vote-countdown">
+                        <span id="mission-countdown-num">5</span> 秒后继续...
                     </div>
                 </div>
             </div>
@@ -250,9 +273,9 @@
                     <p id="result-description"></p>
                     <div id="all-roles" class="all-roles"></div>
                     <div id="neutral-results" class="neutral-results"></div>
-                    <button id="back-to-lobby" class="btn btn-primary" style="margin-top: 20px;">
-                        <span>返回大厅</span>
-                    </button>
+                    <div id="result-countdown" class="vote-countdown" style="margin-top: 20px;">
+                        <span id="result-countdown-num">5</span> 秒后返回大厅...
+                    </div>
                 </div>
             </div>
         </div>

@@ -274,30 +274,37 @@ const GameManager = {
         const submittedCount = Object.keys(cards).filter(pid => team.includes(pid)).length;
 
         if (submittedCount >= team.length) {
-            // 任务完成，计算结果
             const failCount = Object.entries(cards).filter(([pid, v]) => team.includes(pid) && v === false).length;
+            const successCardCount = team.length - failCount;
             const missionSuccess = failCount === 0;
 
             const missionResults = [...(game.missionResults || [null, null, null, null, null])];
             missionResults[game.currentMission] = missionSuccess;
 
-            // 计算胜负
-            const successCount = missionResults.filter(r => r === true).length;
-            const failedCount = missionResults.filter(r => r === false).length;
-
             await RoomManager.roomRef.child('game/missionResults').set(missionResults);
 
-            if (successCount >= 3) {
-                // 好人任务胜利，进入刺客阶段
-                await RoomManager.roomRef.child('game/phase').set('assassin');
-            } else if (failedCount >= 3) {
-                // 坏人任务胜利
-                await this._endGame('evil', '破坏3次任务');
-            } else {
-                // 游戏继续，进入下一轮
-                // 队长可以在下一轮选择发起放逐或民主表决
-                await this._nextMission(game);
-            }
+            // 进入任务结果展示阶段
+            await RoomManager.roomRef.child('game').update({
+                phase: 'missionResult',
+                missionResultSuccess: missionSuccess,
+                missionResultSuccessCount: successCardCount,
+                missionResultFailCount: failCount
+            });
+        }
+    },
+
+    // 任务结果展示后继续游戏
+    async _proceedAfterMissionResult(game) {
+        const missionResults = game.missionResults || [];
+        const successCount = missionResults.filter(r => r === true).length;
+        const failedCount = missionResults.filter(r => r === false).length;
+
+        if (successCount >= 3) {
+            await RoomManager.roomRef.child('game/phase').set('assassin');
+        } else if (failedCount >= 3) {
+            await this._endGame('evil', '破坏3次任务');
+        } else {
+            await this._nextMission(game);
         }
     },
 

@@ -51,8 +51,7 @@ const App = {
         document.getElementById('inquisitor-btn').addEventListener('click', () => this.showInquisitorModal());
         document.getElementById('inquisitor-cancel').addEventListener('click', () => this.hideInquisitorModal());
 
-        // 返回大厅
-        document.getElementById('back-to-lobby').addEventListener('click', () => this.backToLobby());
+        // 返回大厅（按钮已移除，改为自动倒计时返回）
     },
 
     // 创建房间
@@ -551,7 +550,7 @@ window.onGameChange = (game) => {
             }
 
             // 倒计时显示
-            let countdown = 10;
+            let countdown = 5;
             const countdownEl = document.getElementById('vote-countdown-num');
             countdownEl.textContent = countdown;
 
@@ -564,25 +563,22 @@ window.onGameChange = (game) => {
                 }
             }, 1000);
 
-            // 房主负责10秒后推进到下一阶段
-            // 这里使用 onGameChange 回调来确保房主一定会设置计时器
+            // 房主负责5秒后推进到下一阶段
             if (RoomManager.isHost) {
-                console.log('[DEBUG] Host detected voteResult phase, setting 10s timer');
+                console.log('[DEBUG] Host detected voteResult phase, setting 5s timer');
                 setTimeout(async () => {
                     console.log('[DEBUG] Host timer fired, proceeding after vote result');
-                    // 检查当前阶段是否仍然是 voteResult（避免重复推进）
                     const currentSnapshot = await RoomManager.roomRef.child('game/phase').once('value');
                     if (currentSnapshot.val() !== 'voteResult') {
                         console.log('[DEBUG] Phase already changed, skipping');
                         return;
                     }
-                    // 获取完整游戏数据
                     const freshSnapshot = await RoomManager.roomRef.child('game').once('value');
                     const freshGame = freshSnapshot.val();
                     console.log('[DEBUG] Proceeding with freshGame:', freshGame?.voteType, freshGame?.voteResultApproved);
                     await GameManager._proceedAfterVoteResult(freshGame, freshGame.voteResultApproved);
                     console.log('[DEBUG] _proceedAfterVoteResult completed');
-                }, 10000);
+                }, 5000);
             }
             break;
 
@@ -599,6 +595,50 @@ window.onGameChange = (game) => {
                 document.getElementById('mission-waiting').style.display = 'block';
             } else {
                 UI.renderMissionView(isOnTeam, canFail);
+            }
+            break;
+
+        case 'missionResult':
+            UI.showView('mission-result');
+
+            const missionResultStatus = document.getElementById('mission-result-status');
+            const missionSuccessEl = document.getElementById('mission-success-count');
+            const missionFailEl = document.getElementById('mission-fail-count');
+
+            missionSuccessEl.textContent = game.missionResultSuccessCount || 0;
+            missionFailEl.textContent = game.missionResultFailCount || 0;
+
+            if (game.missionResultSuccess) {
+                missionResultStatus.textContent = '✅ 任务成功！';
+                missionResultStatus.style.color = 'var(--accent-green)';
+            } else {
+                missionResultStatus.textContent = '❌ 任务失败！';
+                missionResultStatus.style.color = 'var(--accent-red)';
+            }
+
+            // 倒计时
+            let missionCountdown = 5;
+            const missionCountdownEl = document.getElementById('mission-countdown-num');
+            missionCountdownEl.textContent = missionCountdown;
+
+            const missionCountdownInterval = setInterval(() => {
+                missionCountdown--;
+                if (missionCountdown >= 0) {
+                    missionCountdownEl.textContent = missionCountdown;
+                } else {
+                    clearInterval(missionCountdownInterval);
+                }
+            }, 1000);
+
+            // 房主5秒后推进
+            if (RoomManager.isHost) {
+                setTimeout(async () => {
+                    const currentSnapshot = await RoomManager.roomRef.child('game/phase').once('value');
+                    if (currentSnapshot.val() !== 'missionResult') return;
+                    const freshSnapshot = await RoomManager.roomRef.child('game').once('value');
+                    const freshGame = freshSnapshot.val();
+                    await GameManager._proceedAfterMissionResult(freshGame);
+                }, 5000);
             }
             break;
 
@@ -619,6 +659,28 @@ window.onGameChange = (game) => {
         case 'ended':
             UI.showView('result');
             UI.renderResult(game, GameManager.players);
+
+            // 5秒倒计时后自动返回大厅
+            let resultCountdown = 5;
+            const resultCountdownEl = document.getElementById('result-countdown-num');
+            resultCountdownEl.textContent = resultCountdown;
+
+            const resultCountdownInterval = setInterval(() => {
+                resultCountdown--;
+                if (resultCountdown >= 0) {
+                    resultCountdownEl.textContent = resultCountdown;
+                } else {
+                    clearInterval(resultCountdownInterval);
+                }
+            }, 1000);
+
+            setTimeout(async () => {
+                if (RoomManager.isHost) {
+                    await RoomManager.resetToLobby();
+                }
+                UI.showView('lobby');
+                document.getElementById('role-info-panel').style.display = 'none';
+            }, 5000);
             break;
     }
 };
