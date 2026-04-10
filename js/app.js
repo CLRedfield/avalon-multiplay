@@ -1,60 +1,167 @@
-// ===== 主应用入口 =====
-
 const App = {
-    // 初始化
-    init() {
-        this.bindEvents();
-        UI.showView('home');
+    phaseTimers: {
+        voteResult: null,
+        missionResult: null,
+        ended: null
     },
 
-    // 绑定事件
+    init() {
+        this.bindEvents();
+        UI.renderRuleSummaries();
+        UI.showView('home');
+        this.restoreSession();
+    },
+
     bindEvents() {
-        // 首页事件
         document.getElementById('create-room-btn').addEventListener('click', () => this.createRoom());
         document.getElementById('join-room-btn').addEventListener('click', () => this.joinRoom());
 
-        // 房间号输入自动大写
-        document.getElementById('room-code').addEventListener('input', (e) => {
-            e.target.value = e.target.value.toUpperCase();
+        document.getElementById('room-code').addEventListener('input', (event) => {
+            event.target.value = event.target.value.toUpperCase();
         });
 
-        // 回车键快捷操作
-        document.getElementById('player-name').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.createRoom();
-        });
-        document.getElementById('room-code').addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') this.joinRoom();
+        document.getElementById('player-name').addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') this.createRoom();
         });
 
-        // 大厅事件
+        document.getElementById('room-code').addEventListener('keypress', (event) => {
+            if (event.key === 'Enter') this.joinRoom();
+        });
+
         document.getElementById('copy-code-btn').addEventListener('click', () => this.copyRoomCode());
         document.getElementById('start-game-btn').addEventListener('click', () => this.startGame());
         document.getElementById('leave-room-btn').addEventListener('click', () => this.leaveRoom());
 
-        // 中立角色选择
         document.getElementById('neutral-scapegoat').addEventListener('change', () => this.updateNeutralPool());
         document.getElementById('neutral-armsdealer').addEventListener('change', () => this.updateNeutralPool());
         document.getElementById('neutral-cultist').addEventListener('change', () => this.updateNeutralPool());
 
-        // 角色查看
         document.getElementById('ready-btn').addEventListener('click', () => this.setReady());
-
-        // 投票
         document.getElementById('vote-approve').addEventListener('click', () => this.castVote(true));
         document.getElementById('vote-reject').addEventListener('click', () => this.castVote(false));
-
-        // 任务
         document.getElementById('mission-success').addEventListener('click', () => this.submitMissionCard(true));
         document.getElementById('mission-fail').addEventListener('click', () => this.submitMissionCard(false));
-
-        // 审判官
         document.getElementById('inquisitor-btn').addEventListener('click', () => this.showInquisitorModal());
         document.getElementById('inquisitor-cancel').addEventListener('click', () => this.hideInquisitorModal());
-
-        // 返回大厅（按钮已移除，改为自动倒计时返回）
     },
 
-    // 创建房间
+    async restoreSession() {
+        try {
+            const restored = await RoomManager.restoreSession();
+            if (!restored) return;
+
+            document.getElementById('display-room-code').textContent = restored.roomCode;
+            this.updateLobbyPanels();
+
+            if (restored.state === 'waiting') {
+                UI.showView('lobby');
+            }
+
+            UI.showToast('已恢复房间连接');
+        } catch (error) {
+            console.warn('[App] Session restore failed', error);
+        }
+    },
+
+    updateLobbyPanels() {
+        const hostPanel = document.getElementById('host-panel');
+        const guestPanel = document.getElementById('guest-panel');
+
+        hostPanel.style.display = RoomManager.isHost ? 'block' : 'none';
+        guestPanel.style.display = RoomManager.isHost ? 'none' : 'block';
+
+        const players = GameManager.players || {};
+        const connectedCount = Object.values(players).filter((player) => player && !player.left && player.connected !== false).length;
+        const enableNeutral = connectedCount >= 7;
+        const neutralHint = hostPanel.querySelector('.hint');
+
+        ['neutral-scapegoat', 'neutral-armsdealer', 'neutral-cultist'].forEach((id) => {
+            const checkbox = document.getElementById(id);
+            checkbox.disabled = !enableNeutral;
+        });
+
+        if (neutralHint) {
+            neutralHint.textContent = enableNeutral
+                ? '至少选择一个中立角色，游戏会从已勾选池中随机抽取。'
+                : '5-6 人局默认不开中立，7 人以上才会启用中立池。';
+        }
+    },
+
+    clearTimer(timerKey) {
+        if (this.phaseTimers[timerKey]) {
+            clearTimeout(this.phaseTimers[timerKey]);
+            this.phaseTimers[timerKey] = null;
+        }
+    },
+
+    clearPhaseTimers(exceptKeys = []) {
+        Object.keys(this.phaseTimers).forEach((timerKey) => {
+            if (!exceptKeys.includes(timerKey)) {
+                this.clearTimer(timerKey);
+            }
+        });
+    },
+
+    scheduleVoteResultAdvance() {
+        if (!RoomManager.isHost || this.phaseTimers.voteResult) return;
+
+        this.phaseTimers.voteResult = setTimeout(async () => {
+            this.phaseTimers.voteResult = null;
+
+            const phaseSnapshot = await RoomManager.roomRef.child('game/phase').once('value');
+            if (phaseSnapshot.val() !== 'voteResult') return;
+
+            await GameManager._proceedAfterVoteResult();
+        }, 5000);
+    },
+
+    scheduleMissionResultAdvance() {
+        if (!RoomManager.isHost || this.phaseTimers.missionResult) return;
+
+        this.phaseTimers.missionResult = setTimeout(async () => {
+            this.phaseTimers.missionResult = null;
+
+            const phaseSnapshot = await RoomManager.roomRef.child('game/phase').once('value');
+            if (phaseSnapshot.val() !== 'missionResult') return;
+
+            await GameManager._proceedAfterMissionResult();
+        }, 5000);
+    },
+
+    scheduleReturnToLobby() {
+        if (!RoomManager.isHost || this.phaseTimers.ended) return;
+
+        this.phaseTimers.ended = setTimeout(async () => {
+            this.phaseTimers.ended = null;
+
+            const phaseSnapshot = await RoomManager.roomRef.child('game/phase').once('value');
+            if (phaseSnapshot.val() !== 'ended') return;
+
+            if (RoomManager.isHost) {
+                await RoomManager.resetToLobby();
+            }
+
+            UI.showView('lobby');
+            document.getElementById('role-info-panel').style.display = 'none';
+        }, 5000);
+    },
+
+    resumeHostControlledPhase() {
+        if (!RoomManager.isHost || !GameManager.gameData) return;
+
+        switch (GameManager.gameData.phase) {
+            case 'voteResult':
+                this.scheduleVoteResultAdvance();
+                break;
+            case 'missionResult':
+                this.scheduleMissionResultAdvance();
+                break;
+            case 'ended':
+                this.scheduleReturnToLobby();
+                break;
+        }
+    },
+
     async createRoom() {
         const name = document.getElementById('player-name').value.trim();
         if (!name) {
@@ -65,8 +172,7 @@ const App = {
         try {
             const code = await RoomManager.createRoom(name);
             document.getElementById('display-room-code').textContent = code;
-            document.getElementById('host-panel').style.display = 'block';
-            document.getElementById('guest-panel').style.display = 'none';
+            this.updateLobbyPanels();
             UI.showView('lobby');
             UI.showToast('房间创建成功: ' + code);
         } catch (error) {
@@ -74,7 +180,6 @@ const App = {
         }
     },
 
-    // 加入房间
     async joinRoom() {
         const name = document.getElementById('player-name').value.trim();
         const code = document.getElementById('room-code').value.trim().toUpperCase();
@@ -83,6 +188,7 @@ const App = {
             UI.showToast('请输入昵称');
             return;
         }
+
         if (!code) {
             UI.showToast('请输入房间号');
             return;
@@ -91,8 +197,7 @@ const App = {
         try {
             await RoomManager.joinRoom(code, name);
             document.getElementById('display-room-code').textContent = code;
-            document.getElementById('host-panel').style.display = 'none';
-            document.getElementById('guest-panel').style.display = 'block';
+            this.updateLobbyPanels();
             UI.showView('lobby');
             UI.showToast('已加入房间');
         } catch (error) {
@@ -100,47 +205,50 @@ const App = {
         }
     },
 
-    // 复制房间号
     copyRoomCode() {
         const code = RoomManager.currentRoom;
+        if (!code) return;
+
         if (navigator.clipboard) {
             navigator.clipboard.writeText(code);
-            UI.showToast('已复制房间号: ' + code);
         } else {
-            // 兼容处理
             const input = document.createElement('input');
             input.value = code;
             document.body.appendChild(input);
             input.select();
             document.execCommand('copy');
             document.body.removeChild(input);
-            UI.showToast('已复制房间号: ' + code);
         }
+
+        UI.showToast('已复制房间号: ' + code);
     },
 
-    // 退出房间
     async leaveRoom() {
-        if (!confirm('确定要退出房间吗？')) {
+        if (!confirm('确定要离开当前房间吗？')) {
             return;
         }
 
         try {
             await RoomManager.leaveRoom();
+            this.clearPhaseTimers();
             UI.showView('home');
-            UI.showToast('已退出房间');
+            UI.showToast('已离开房间');
         } catch (error) {
-            UI.showToast('退出失败: ' + error.message);
+            UI.showToast('离开失败: ' + error.message);
         }
     },
 
-    // 更新中立角色池
     async updateNeutralPool() {
         const pool = [];
-        if (document.getElementById('neutral-scapegoat').checked) pool.push('scapegoat');
-        if (document.getElementById('neutral-armsdealer').checked) pool.push('armsdealer');
-        if (document.getElementById('neutral-cultist').checked) pool.push('cultist');
+        const connectedCount = Object.values(GameManager.players || {}).filter((player) => player && !player.left && player.connected !== false).length;
 
-        if (pool.length === 0) {
+        if (connectedCount >= 7) {
+            if (document.getElementById('neutral-scapegoat').checked) pool.push('scapegoat');
+            if (document.getElementById('neutral-armsdealer').checked) pool.push('armsdealer');
+            if (document.getElementById('neutral-cultist').checked) pool.push('cultist');
+        }
+
+        if (connectedCount >= 7 && pool.length === 0) {
             UI.showToast('至少选择一个中立角色');
             return;
         }
@@ -148,7 +256,6 @@ const App = {
         await RoomManager.updateNeutralPool(pool);
     },
 
-    // 开始游戏
     async startGame() {
         try {
             await RoomManager.startGame();
@@ -157,47 +264,56 @@ const App = {
         }
     },
 
-    // 设置准备
     async setReady() {
         await RoomManager.setReady(true);
-        // 隐藏准备按钮，显示已准备提示
         document.getElementById('ready-btn').style.display = 'none';
-        UI.showToast('✅ 你已准备，等待其他玩家...');
+        UI.showToast('已准备，等待其他玩家');
     },
 
-    // 投票
-    async castVote(approve) {
-        await GameManager.castVote(approve);
+    castVote(approve) {
+        return GameManager.castVote(approve);
     },
 
-    // 提交任务卡
-    async submitMissionCard(success) {
-        await GameManager.submitMissionCard(success);
+    submitMissionCard(success) {
+        return GameManager.submitMissionCard(success);
     },
 
-    // 发起放逐投票
-    async voteInitiateTribunal(agree) {
-        await GameManager.voteToInitiateTribunal(agree);
+    voteInitiateTribunal(agree) {
+        return GameManager.voteToInitiateTribunal(agree);
     },
 
-    // 放逐投票
-    async castTribunalVote(targetId) {
-        await GameManager.castTribunalVote(targetId);
+    castTribunalVote(targetId) {
+        return GameManager.castTribunalVote(targetId);
     },
 
-    // 刺杀
     async assassinate(targetId) {
-        if (confirm('确定要刺杀这名玩家吗？')) {
-            await GameManager.assassinate(targetId);
-        }
-    },
-
-    // 审判官弹窗
-    showInquisitorModal() {
-        if (!GameManager.canUseInquisitorSkill()) {
-            UI.showToast('技能不可用');
+        if (!confirm('确定刺杀这名玩家吗？')) {
             return;
         }
+
+        await GameManager.assassinate(targetId);
+    },
+
+    showInquisitorModal() {
+        if (!GameManager.canUseInquisitorSkill()) {
+            UI.showToast('当前不能使用该技能');
+            return;
+        }
+
+        const eligibleTargets = GameManager.getInquisitorEligibleTargetIds(GameManager.gameData);
+        if (eligibleTargets.length === 0) {
+            UI.showToast('上一轮没有可查看的上车玩家');
+            return;
+        }
+
+        const modalDescription = document.querySelector('#inquisitor-modal p');
+        const lastMission = GameManager.getLastCompletedMissionIndex(GameManager.gameData);
+        if (modalDescription) {
+            modalDescription.textContent = lastMission === null
+                ? '选择上一轮上车的玩家，查看其任务牌'
+                : `选择第 ${lastMission + 1} 轮上车的玩家，查看其提交的是成功还是失败`;
+        }
+
         UI.renderInquisitorTargets(GameManager.players, GameManager.gameData);
         document.getElementById('inquisitor-modal').style.display = 'flex';
     },
@@ -210,45 +326,43 @@ const App = {
         const result = await GameManager.useInquisitorSkill(targetId);
         this.hideInquisitorModal();
 
-        if (result) {
-            if (result.noData) {
-                UI.showToast('第一轮没有投票记录');
-            } else {
-                UI.showToast(`${result.player} 在任务${result.mission}投票: ${result.vote}`, 5000);
-            }
+        if (!result) return;
+
+        if (result.noData) {
+            UI.showToast('第一轮没有可查看的任务记录');
+            return;
         }
+
+        UI.showToast(`${result.player} 在任务 ${result.mission} 提交了: ${result.vote}`, 5000);
     },
 
-    // 返回大厅
     async backToLobby() {
         if (RoomManager.isHost) {
             await RoomManager.resetToLobby();
         }
+
         UI.showView('lobby');
-        // 隐藏角色面板
         document.getElementById('role-info-panel').style.display = 'none';
     },
 
-    // 切换角色面板展开/收起
     toggleRolePanel() {
-        const panel = document.getElementById('role-info-panel');
-        panel.classList.toggle('expanded');
+        document.getElementById('role-info-panel').classList.toggle('expanded');
     },
 
-    // 显示角色面板
     showRolePanel(role) {
         if (!role) return;
+
         const panel = document.getElementById('role-info-panel');
-        panel.style.display = 'block';
-
-        document.getElementById('role-panel-icon').textContent = role.icon || '?';
-        document.getElementById('role-panel-name').textContent = role.name || '未知';
-        document.getElementById('role-panel-desc').textContent = role.description || '';
-
-        // 根据阵营设置颜色
         const header = panel.querySelector('.role-info-header');
+
+        panel.style.display = 'block';
+        document.getElementById('role-panel-icon').textContent = role.icon || '?';
+        document.getElementById('role-panel-name').textContent = role.name || 'Unknown';
+        document.getElementById('role-panel-desc').textContent = UI.getRoleDescription(role);
+
         header.style.borderLeftWidth = '4px';
         header.style.borderLeftStyle = 'solid';
+
         if (role.team === 'good') {
             header.style.borderLeftColor = 'var(--accent-blue)';
         } else if (role.team === 'evil') {
@@ -258,189 +372,176 @@ const App = {
         }
     },
 
-    // 队长选人
     selectTeamMember(playerId) {
-        GameManager.selectTeamMember(playerId);
+        return GameManager.selectTeamMember(playerId);
     },
 
-    // 队长选择行动类型
     chooseAction(actionType) {
-        GameManager.chooseActionType(actionType);
+        return GameManager.chooseActionType(actionType);
     },
 
-    // 确认队伍并进入表决
     confirmTeamForVote() {
-        GameManager.confirmTeamForVote();
+        return GameManager.confirmTeamForVote();
     },
 
-    // 队长选择放逐目标
     selectExileTarget(playerId) {
-        GameManager.selectExileTarget(playerId);
+        return GameManager.selectExileTarget(playerId);
     },
 
-    // 确认放逐目标并进入表决
     confirmExileForVote() {
-        GameManager.confirmExileForVote();
+        return GameManager.confirmExileForVote();
     }
 };
 
-// ===== Firebase 回调 =====
-
 window.onPlayersChange = (players) => {
     GameManager.players = players;
+    App.updateLobbyPanels();
+
+    if (RoomManager.playerId && RoomManager.currentRoom && !players[RoomManager.playerId]) {
+        RoomManager._cleanup(true);
+        App.clearPhaseTimers();
+        UI.showView('home');
+        UI.showToast('你已不在当前房间');
+        return;
+    }
 
     if (UI.currentView === 'lobby') {
         UI.renderLobbyPlayers(players);
     }
 
-    // 在角色查看阶段显示准备状态
     if (UI.currentView === 'role' && GameManager.gameData) {
-        console.log('[DEBUG] In role view, rendering ready status');
-        const result = UI.renderRoleReadyStatus(players, GameManager.gameData);
-        console.log('[DEBUG] Ready result:', result);
+        const readyStatus = UI.renderRoleReadyStatus(players, GameManager.gameData);
 
-        // 检查是否所有人都准备好了
-        if (result && result.readyCount === result.totalCount && result.totalCount > 0) {
-            console.log('[DEBUG] All players ready! Transitioning...');
-            // 所有人准备好，自动进入游戏（由房主触发）
-            if (RoomManager.isHost) {
-                console.log('[DEBUG] Host setting phase to selectTeam');
-                RoomManager.roomRef.child('game/phase').set('captainChoice');
-            }
+        if (readyStatus && readyStatus.readyCount === readyStatus.totalCount && readyStatus.totalCount > 0 && RoomManager.isHost) {
+            RoomManager.roomRef.child('game').transaction((game) => {
+                if (!game || game.phase !== 'night') return game;
+                game.phase = 'captainChoice';
+                return game;
+            }, undefined, false);
         }
     }
 };
 
+window.onHostChange = () => {
+    App.updateLobbyPanels();
+    App.resumeHostControlledPhase();
+};
+
 window.onRoomStateChange = (state) => {
+    App.updateLobbyPanels();
+
     if (state === 'playing' && UI.currentView === 'lobby') {
         UI.showView('role');
+    }
+
+    if (state === 'waiting' && RoomManager.currentRoom && UI.currentView === 'home') {
+        UI.showView('lobby');
     }
 };
 
 window.onSettingsChange = (settings) => {
-    // 同步中立角色设置到UI
-    if (settings.neutralPool) {
-        document.getElementById('neutral-scapegoat').checked = settings.neutralPool.includes('scapegoat');
-        document.getElementById('neutral-armsdealer').checked = settings.neutralPool.includes('armsdealer');
-        document.getElementById('neutral-cultist').checked = settings.neutralPool.includes('cultist');
-    }
+    document.getElementById('neutral-scapegoat').checked = (settings.neutralPool || []).includes('scapegoat');
+    document.getElementById('neutral-armsdealer').checked = (settings.neutralPool || []).includes('armsdealer');
+    document.getElementById('neutral-cultist').checked = (settings.neutralPool || []).includes('cultist');
+    App.updateLobbyPanels();
 };
 
 window.onGameChange = (game) => {
-    console.log('[DEBUG] onGameChange - game:', game);
-    console.log('[DEBUG] onGameChange - phase:', game?.phase);
-    console.log('[DEBUG] onGameChange - playerOrder:', game?.playerOrder);
+    GameManager.gameData = game;
 
-    if (!game) return;
-
-    // 检查游戏数据完整性（避免部分更新导致错误）
-    if (!game.phase) {
-        console.warn('[DEBUG] Game data incomplete, missing phase');
+    if (!game) {
+        App.clearPhaseTimers();
         return;
     }
 
-    GameManager.gameData = game;
-
-    // 获取玩家名字映射
-    const playerNames = {};
-    for (const [pid, player] of Object.entries(GameManager.players)) {
-        playerNames[pid] = player.name;
+    if (game.roles && !game.roles[RoomManager.playerId]) {
+        UI.showToast('你没有加入当前对局');
+        return;
     }
 
-    // 根据阶段更新UI
+    const playerNames = {};
+    for (const [playerId, player] of Object.entries(GameManager.players || {})) {
+        playerNames[playerId] = player.name;
+    }
+
+    App.clearPhaseTimers(
+        game.phase === 'voteResult' ? ['voteResult']
+            : game.phase === 'missionResult' ? ['missionResult']
+            : game.phase === 'ended' ? ['ended']
+            : []
+    );
+
     switch (game.phase) {
-        case 'night':
-            const myRole = GameManager.getMyRole();
-            const nightInfo = getNightInfo(myRole,
-                // 需要完整角色对象
-                Object.fromEntries(
-                    Object.entries(game.roles).map(([pid, roleId]) =>
-                        [pid, GameManager.getRoleById(roleId)]
-                    )
-                ),
-                RoomManager.playerId
+        case 'night': {
+            const myRole = GameManager.getMyRole(game);
+            const roleAssignments = Object.fromEntries(
+                Object.entries(game.roles || {}).map(([playerId, roleId]) => [playerId, GameManager.getRoleById(roleId)])
             );
-            UI.renderRoleCard(myRole, nightInfo, playerNames);
+
+            UI.renderRoleCard(myRole, getNightInfo(myRole, roleAssignments, RoomManager.playerId), playerNames);
             UI.showView('role');
-            // 初始渲染准备状态
             UI.renderRoleReadyStatus(GameManager.players, game);
-            // 显示角色面板
             App.showRolePanel(myRole);
             break;
+        }
 
-        case 'captainChoice':
+        case 'captainChoice': {
             UI.showView('game');
-            App.showRolePanel(GameManager.getMyRole());
-
-            if (!game.playerOrder || game.playerOrder.length === 0) {
-                document.getElementById('game-status-text').textContent = '错误: 玩家列表丢失';
-                break;
-            }
-
+            App.showRolePanel(GameManager.getMyRole(game));
             UI.renderMissionTrack(game.missionResults, game.currentMission, game.playerOrder.length);
             UI.renderRejectTrack(game.rejectCount || 0);
 
-            const captainCC = GameManager.getCaptain();
-            document.getElementById('game-status-text').textContent = '队长选择行动类型';
-            document.getElementById('captain-info').textContent = `当前队长: ${captainCC?.name || '未知'}`;
+            const captain = GameManager.getCaptain(game);
+            document.getElementById('game-status-text').textContent = '队长选择本轮行动';
+            document.getElementById('captain-info').textContent = `当前队长: ${captain.name}`;
 
-            // 显示玩家列表（不可选）
             UI.renderGamePlayers(GameManager.players, game, false, null);
 
-            if (GameManager.isCaptain()) {
+            if (GameManager.isCaptain(game)) {
                 UI.renderActionPanel(`
-                    <p style="text-align: center; margin-bottom: 16px;">
-                        请选择本轮行动
-                    </p>
+                    <p style="text-align: center; margin-bottom: 16px;">请选择本轮行动</p>
                     <div class="action-choice">
                         <button class="btn btn-primary" onclick="App.chooseAction('mission')">
-                            <span>🚀 发起行动</span>
+                            <span>发起任务</span>
                         </button>
                         <button class="btn btn-danger" onclick="App.chooseAction('tribunal')">
-                            <span>⚖️ 发起放逐</span>
+                            <span>发起放逐</span>
                         </button>
                     </div>
                 `);
             } else {
                 UI.renderActionPanel(`
                     <p style="text-align: center; color: var(--text-secondary);">
-                        等待队长选择行动类型...
+                        等待队长选择行动...
                     </p>
                 `);
             }
             break;
+        }
 
-        case 'selectTeam':
+        case 'selectTeam': {
             UI.showView('game');
-            App.showRolePanel(GameManager.getMyRole());
-
-            if (!game.playerOrder || game.playerOrder.length === 0) {
-                document.getElementById('game-status-text').textContent = '错误: 玩家列表丢失';
-                break;
-            }
-
+            App.showRolePanel(GameManager.getMyRole(game));
             UI.renderMissionTrack(game.missionResults, game.currentMission, game.playerOrder.length);
             UI.renderRejectTrack(game.rejectCount || 0);
 
-            const captainST = GameManager.getCaptain();
+            const captain = GameManager.getCaptain(game);
+            const isCaptain = GameManager.isCaptain(game);
+            const teamSize = GameManager.getCurrentMissionSize(game);
+            const selectedCount = (game.selectedTeam || []).length;
+
             document.getElementById('game-status-text').textContent = '队长选择任务队员';
-            document.getElementById('captain-info').textContent = `当前队长: ${captainST?.name || '未知'}`;
+            document.getElementById('captain-info').textContent = `当前队长: ${captain.name}`;
 
-            const isCaptainST = GameManager.isCaptain();
-            UI.renderGamePlayers(GameManager.players, game, isCaptainST, (pid) => {
-                App.selectTeamMember(pid);
-            });
+            UI.renderGamePlayers(GameManager.players, game, isCaptain, (playerId) => App.selectTeamMember(playerId));
 
-            if (isCaptainST) {
-                const teamSize = GameManager.getCurrentMissionSize();
-                const selected = (game.selectedTeam || []).length;
-                const canConfirmTeam = selected === teamSize;
+            if (isCaptain) {
                 UI.renderActionPanel(`
                     <p style="text-align: center; margin-bottom: 12px;">
-                        选择 ${teamSize} 名队员 (已选 ${selected}/${teamSize})
+                        选择 ${teamSize} 名队员（已选 ${selectedCount}/${teamSize}）
                     </p>
-                    <button class="btn btn-primary" onclick="App.confirmTeamForVote()" ${!canConfirmTeam ? 'disabled' : ''}>
-                        <span>✓ 确认队伍并表决</span>
+                    <button class="btn btn-primary" onclick="App.confirmTeamForVote()" ${selectedCount === teamSize ? '' : 'disabled'}>
+                        <span>确认队伍并投票</span>
                     </button>
                 `);
             } else {
@@ -450,40 +551,32 @@ window.onGameChange = (game) => {
                     </p>
                 `);
             }
+
             UI.updateInquisitorButton(GameManager.canUseInquisitorSkill());
             break;
+        }
 
-        case 'selectExile':
+        case 'selectExile': {
             UI.showView('game');
-            App.showRolePanel(GameManager.getMyRole());
-
-            if (!game.playerOrder || game.playerOrder.length === 0) {
-                document.getElementById('game-status-text').textContent = '错误: 玩家列表丢失';
-                break;
-            }
-
+            App.showRolePanel(GameManager.getMyRole(game));
             UI.renderMissionTrack(game.missionResults, game.currentMission, game.playerOrder.length);
             UI.renderRejectTrack(game.rejectCount || 0);
 
-            const captainSE = GameManager.getCaptain();
+            const captain = GameManager.getCaptain(game);
+            const isCaptain = GameManager.isCaptain(game);
+            const hasTarget = !!game.exileTarget;
+            const targetName = hasTarget ? (GameManager.players[game.exileTarget]?.name || game.exileTarget) : '未选择';
+
             document.getElementById('game-status-text').textContent = '队长选择放逐目标';
-            document.getElementById('captain-info').textContent = `当前队长: ${captainSE?.name || '未知'}`;
+            document.getElementById('captain-info').textContent = `当前队长: ${captain.name}`;
 
-            const isCaptainSE = GameManager.isCaptain();
-            // 渲染玩家选择（队长可点击选择放逐目标）
-            UI.renderExileTargetSelection(GameManager.players, game, isCaptainSE, (pid) => {
-                App.selectExileTarget(pid);
-            });
+            UI.renderExileTargetSelection(GameManager.players, game, isCaptain, (playerId) => App.selectExileTarget(playerId));
 
-            if (isCaptainSE) {
-                const hasTarget = !!game.exileTarget;
-                const targetName = hasTarget ? GameManager.players[game.exileTarget]?.name : '未选择';
+            if (isCaptain) {
                 UI.renderActionPanel(`
-                    <p style="text-align: center; margin-bottom: 12px;">
-                        放逐目标: ${targetName}
-                    </p>
-                    <button class="btn btn-danger" onclick="App.confirmExileForVote()" ${!hasTarget ? 'disabled' : ''}>
-                        <span>⚖️ 确认放逐并表决</span>
+                    <p style="text-align: center; margin-bottom: 12px;">放逐目标: ${targetName}</p>
+                    <button class="btn btn-danger" onclick="App.confirmExileForVote()" ${hasTarget ? '' : 'disabled'}>
+                        <span>确认放逐并投票</span>
                     </button>
                 `);
             } else {
@@ -494,62 +587,56 @@ window.onGameChange = (game) => {
                 `);
             }
             break;
+        }
 
-        case 'vote':
+        case 'vote': {
             UI.showView('vote');
-            const hasVotedV = game.votes?.[RoomManager.playerId] !== undefined;
+            const hasVoted = game.votes?.[RoomManager.playerId] !== undefined;
+            const activePlayers = GameManager.getActivePlayerIds(game);
 
-            if (hasVotedV) {
-                const activePlayers = game.playerOrder.filter(pid => !(game.exiledPlayers || []).includes(pid));
-                const votedCount = Object.keys(game.votes || {}).filter(pid => activePlayers.includes(pid)).length;
+            if (hasVoted) {
+                const votedCount = Object.keys(game.votes || {}).filter((playerId) => activePlayers.includes(playerId)).length;
                 UI.showVoteWaiting(votedCount, activePlayers.length);
-            } else {
-                // 根据投票类型显示不同内容
-                if (game.voteType === 'mission') {
-                    const team = game.selectedTeam || [];
-                    UI.renderVoteView(team, GameManager.players, '是否同意此次任务队伍出发？');
-                } else if (game.voteType === 'exile') {
-                    const targetName = GameManager.players[game.exileTarget]?.name || '未知';
-                    UI.renderExileVoteView(targetName, '是否同意放逐此玩家？');
-                }
+                break;
+            }
+
+            if (game.voteType === 'mission') {
+                UI.renderVoteView(game.selectedTeam || [], GameManager.players, '是否同意这次任务队伍出发？');
+            } else if (game.voteType === 'exile') {
+                const targetName = GameManager.players[game.exileTarget]?.name || '未知';
+                UI.renderExileVoteView(targetName, '是否同意放逐这名玩家？');
             }
             break;
+        }
 
-        case 'voteResult':
+        case 'voteResult': {
             UI.showView('vote-result');
 
-            // 显示投票结果
             const approveList = document.getElementById('vote-approve-list');
             const rejectList = document.getElementById('vote-reject-list');
             approveList.innerHTML = '';
             rejectList.innerHTML = '';
 
-            const voteData = game.votes || {};
-            const activeVoters = game.playerOrder.filter(pid => !(game.exiledPlayers || []).includes(pid));
-
-            for (const pid of activeVoters) {
-                const playerName = GameManager.players[pid]?.name || pid;
+            for (const playerId of GameManager.getActivePlayerIds(game)) {
                 const li = document.createElement('li');
-                li.textContent = playerName;
+                li.textContent = GameManager.players[playerId]?.name || playerId;
 
-                if (voteData[pid] === true) {
+                if (game.votes?.[playerId] === true) {
                     approveList.appendChild(li);
                 } else {
                     rejectList.appendChild(li);
                 }
             }
 
-            // 显示结果状态
             const resultStatus = document.getElementById('vote-result-status');
             if (game.voteResultApproved) {
-                resultStatus.textContent = `✅ 投票通过 (${game.voteResultApproves} : ${game.voteResultRejects})`;
+                resultStatus.textContent = `投票通过 (${game.voteResultApproves} : ${game.voteResultRejects})`;
                 resultStatus.style.color = 'var(--accent-green)';
             } else {
-                resultStatus.textContent = `❌ 投票否决 (${game.voteResultApproves} : ${game.voteResultRejects})`;
+                resultStatus.textContent = `投票否决 (${game.voteResultApproves} : ${game.voteResultRejects})`;
                 resultStatus.style.color = 'var(--accent-red)';
             }
 
-            // 倒计时显示
             let countdown = 5;
             const countdownEl = document.getElementById('vote-countdown-num');
             countdownEl.textContent = countdown;
@@ -563,30 +650,15 @@ window.onGameChange = (game) => {
                 }
             }, 1000);
 
-            // 房主负责5秒后推进到下一阶段
-            if (RoomManager.isHost) {
-                console.log('[DEBUG] Host detected voteResult phase, setting 5s timer');
-                setTimeout(async () => {
-                    console.log('[DEBUG] Host timer fired, proceeding after vote result');
-                    const currentSnapshot = await RoomManager.roomRef.child('game/phase').once('value');
-                    if (currentSnapshot.val() !== 'voteResult') {
-                        console.log('[DEBUG] Phase already changed, skipping');
-                        return;
-                    }
-                    const freshSnapshot = await RoomManager.roomRef.child('game').once('value');
-                    const freshGame = freshSnapshot.val();
-                    console.log('[DEBUG] Proceeding with freshGame:', freshGame?.voteType, freshGame?.voteResultApproved);
-                    await GameManager._proceedAfterVoteResult(freshGame, freshGame.voteResultApproved);
-                    console.log('[DEBUG] _proceedAfterVoteResult completed');
-                }, 5000);
-            }
+            App.scheduleVoteResultAdvance();
             break;
+        }
 
-        case 'mission':
+        case 'mission': {
             UI.showView('mission');
             const isOnTeam = (game.selectedTeam || []).includes(RoomManager.playerId);
-            const myMissionRole = GameManager.getMyRole();
-            const canFail = myMissionRole?.team === 'evil' || myMissionRole?.team === 'neutral';
+            const myRole = GameManager.getMyRole(game);
+            const canFail = GameManager.canRoleSubmitFail(myRole, RoomManager.playerId, game);
 
             if (game.missionCards?.[RoomManager.playerId] !== undefined) {
                 document.getElementById('mission-instruction').textContent = '等待其他队员完成任务...';
@@ -597,95 +669,74 @@ window.onGameChange = (game) => {
                 UI.renderMissionView(isOnTeam, canFail);
             }
             break;
+        }
 
-        case 'missionResult':
+        case 'missionResult': {
             UI.showView('mission-result');
+            document.getElementById('mission-success-count').textContent = game.missionResultSuccessCount || 0;
+            document.getElementById('mission-fail-count').textContent = game.missionResultFailCount || 0;
 
-            const missionResultStatus = document.getElementById('mission-result-status');
-            const missionSuccessEl = document.getElementById('mission-success-count');
-            const missionFailEl = document.getElementById('mission-fail-count');
-
-            missionSuccessEl.textContent = game.missionResultSuccessCount || 0;
-            missionFailEl.textContent = game.missionResultFailCount || 0;
-
+            const resultStatus = document.getElementById('mission-result-status');
             if (game.missionResultSuccess) {
-                missionResultStatus.textContent = '✅ 任务成功！';
-                missionResultStatus.style.color = 'var(--accent-green)';
+                resultStatus.textContent = '任务成功';
+                resultStatus.style.color = 'var(--accent-green)';
             } else {
-                missionResultStatus.textContent = '❌ 任务失败！';
-                missionResultStatus.style.color = 'var(--accent-red)';
+                resultStatus.textContent = '任务失败';
+                resultStatus.style.color = 'var(--accent-red)';
             }
 
-            // 倒计时
-            let missionCountdown = 5;
-            const missionCountdownEl = document.getElementById('mission-countdown-num');
-            missionCountdownEl.textContent = missionCountdown;
+            let countdown = 5;
+            const countdownEl = document.getElementById('mission-countdown-num');
+            countdownEl.textContent = countdown;
 
-            const missionCountdownInterval = setInterval(() => {
-                missionCountdown--;
-                if (missionCountdown >= 0) {
-                    missionCountdownEl.textContent = missionCountdown;
+            const countdownInterval = setInterval(() => {
+                countdown--;
+                if (countdown >= 0) {
+                    countdownEl.textContent = countdown;
                 } else {
-                    clearInterval(missionCountdownInterval);
+                    clearInterval(countdownInterval);
                 }
             }, 1000);
 
-            // 房主5秒后推进
-            if (RoomManager.isHost) {
-                setTimeout(async () => {
-                    const currentSnapshot = await RoomManager.roomRef.child('game/phase').once('value');
-                    if (currentSnapshot.val() !== 'missionResult') return;
-                    const freshSnapshot = await RoomManager.roomRef.child('game').once('value');
-                    const freshGame = freshSnapshot.val();
-                    await GameManager._proceedAfterMissionResult(freshGame);
-                }, 5000);
-            }
+            App.scheduleMissionResultAdvance();
             break;
+        }
 
-        // tribunalPrompt 已废弃 - 队长在selectTeam阶段直接选择是否发起放逐
-
-        case 'tribunal':
+        case 'tribunal': {
             UI.showView('tribunal');
-            const myTribunalVote = game.tribunalVotes?.[RoomManager.playerId];
-            UI.renderTribunalVoting(GameManager.players, game, myTribunalVote);
+            UI.renderTribunalVoting(GameManager.players, game, game.tribunalVotes?.[RoomManager.playerId]);
             break;
+        }
 
-        case 'assassin':
+        case 'assassin': {
             UI.showView('assassin');
-            const isAssassin = GameManager.getMyRole()?.id === 'assassin';
-            UI.renderAssassinView(GameManager.players, game, isAssassin);
+            UI.renderAssassinView(GameManager.players, game, GameManager.getMyRole(game)?.id === 'assassin');
             break;
+        }
 
-        case 'ended':
+        case 'ended': {
             UI.showView('result');
             UI.renderResult(game, GameManager.players);
 
-            // 5秒倒计时后自动返回大厅
-            let resultCountdown = 5;
-            const resultCountdownEl = document.getElementById('result-countdown-num');
-            resultCountdownEl.textContent = resultCountdown;
+            let countdown = 5;
+            const countdownEl = document.getElementById('result-countdown-num');
+            countdownEl.textContent = countdown;
 
-            const resultCountdownInterval = setInterval(() => {
-                resultCountdown--;
-                if (resultCountdown >= 0) {
-                    resultCountdownEl.textContent = resultCountdown;
+            const countdownInterval = setInterval(() => {
+                countdown--;
+                if (countdown >= 0) {
+                    countdownEl.textContent = countdown;
                 } else {
-                    clearInterval(resultCountdownInterval);
+                    clearInterval(countdownInterval);
                 }
             }, 1000);
 
-            setTimeout(async () => {
-                if (RoomManager.isHost) {
-                    await RoomManager.resetToLobby();
-                }
-                UI.showView('lobby');
-                document.getElementById('role-info-panel').style.display = 'none';
-            }, 5000);
+            App.scheduleReturnToLobby();
             break;
+        }
     }
 };
 
-// 初始化
 document.addEventListener('DOMContentLoaded', () => {
     App.init();
 });

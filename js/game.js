@@ -1,11 +1,25 @@
-// ===== 游戏逻辑管理 =====
+const GAME_RULES = {
+    neutralCanFailMissions: true,
+    exileTieBehavior: 'noExile',
+    maxExilesPerGame: null
+};
 
 const GameManager = {
     gameData: null,
     players: {},
-    myRole: null,
 
-    // 获取角色对象
+    canRoleSubmitFail(role, playerId = RoomManager.playerId, game = this.gameData) {
+        if (!role || !playerId) return false;
+        if (role.team === 'evil') return true;
+        if (role.team !== 'neutral' || !GAME_RULES.neutralCanFailMissions) return false;
+
+        if (role.id === 'scapegoat') {
+            return !game?.neutralFailUsage?.[playerId];
+        }
+
+        return true;
+    },
+
     getRoleById(roleId) {
         for (const key of Object.keys(ROLES)) {
             if (ROLES[key].id === roleId) {
@@ -15,36 +29,39 @@ const GameManager = {
         return null;
     },
 
-    // 获取我的角色
-    getMyRole() {
-        if (!this.gameData || !this.gameData.roles) return null;
-        const roleId = this.gameData.roles[RoomManager.playerId];
-        return this.getRoleById(roleId);
+    getMyRole(game = this.gameData) {
+        if (!game?.roles || !RoomManager.playerId) return null;
+        return this.getRoleById(game.roles[RoomManager.playerId]);
     },
 
-    // 获取当前队长
-    getCaptain() {
-        if (!this.gameData || !this.gameData.playerOrder) return { id: null, name: '未知' };
-        const idx = this.gameData.captainIndex || 0;
-        const playerId = this.gameData.playerOrder[idx];
-        return { id: playerId, name: this.players[playerId]?.name || '未知' };
+    getCaptain(game = this.gameData) {
+        if (!game?.playerOrder?.length) {
+            return { id: null, name: 'Unknown' };
+        }
+
+        const playerId = game.playerOrder[game.captainIndex || 0];
+        return {
+            id: playerId,
+            name: this.players[playerId]?.name || 'Unknown'
+        };
     },
 
-    // 我是否是队长
-    isCaptain() {
-        const captain = this.getCaptain();
-        return captain && captain.id === RoomManager.playerId;
+    isCaptain(game = this.gameData) {
+        return this.getCaptain(game).id === RoomManager.playerId;
     },
 
-    // 获取下一个非放逐的队长索引
-    getNextCaptainIndex(currentIndex, exiledPlayers = []) {
-        if (!this.gameData || !this.gameData.playerOrder) return 0;
+    getActivePlayerIds(game = this.gameData) {
+        if (!game?.playerOrder) return [];
+        const exiledPlayers = game.exiledPlayers || [];
+        return game.playerOrder.filter((playerId) => !exiledPlayers.includes(playerId));
+    },
 
-        const playerOrder = this.gameData.playerOrder;
+    getNextCaptainIndex(currentIndex, exiledPlayers = [], playerOrder = this.gameData?.playerOrder || []) {
+        if (!playerOrder.length) return 0;
+
         let nextIndex = (currentIndex + 1) % playerOrder.length;
         let attempts = 0;
 
-        // 跳过被放逐的玩家
         while (exiledPlayers.includes(playerOrder[nextIndex]) && attempts < playerOrder.length) {
             nextIndex = (nextIndex + 1) % playerOrder.length;
             attempts++;
@@ -53,32 +70,63 @@ const GameManager = {
         return nextIndex;
     },
 
-    // 获取当前任务需要的队伍人数
-    getCurrentMissionSize() {
-        if (!this.gameData) return 0;
-        const playerCount = this.gameData.playerOrder.length;
-        const missionIndex = this.gameData.currentMission;
-        return MISSION_SIZES[playerCount]?.[missionIndex] || 0;
+    getCurrentMissionSize(game = this.gameData) {
+        if (!game?.playerOrder?.length) return 0;
+        return MISSION_SIZES[game.playerOrder.length]?.[game.currentMission] || 0;
     },
 
-    // 队长选择行动类型（发起行动 或 发起放逐）
-    async chooseActionType(actionType) {
-        if (!this.isCaptain()) return;
+    getLastCompletedMissionIndex(game = this.gameData) {
+        const currentMission = game?.currentMission;
+        if (!Number.isInteger(currentMission) || currentMission < 1) return null;
+        return currentMission - 1;
+    },
 
-        await RoomManager.roomRef.child('game').update({
-            actionType: actionType, // 'mission' 或 'tribunal'
-            phase: actionType === 'mission' ? 'selectTeam' : 'selectExile',
-            selectedTeam: [],
-            exileTarget: null
+    getInquisitorEligibleTargetIds(game = this.gameData) {
+        const lastMission = this.getLastCompletedMissionIndex(game);
+        if (lastMission === null) return [];
+
+        const exiledPlayers = game?.exiledPlayers || [];
+        const missionHistory = game?.missionHistory || {};
+        const candidateOrder = game?.playerOrder?.length ? game.playerOrder : Object.keys(missionHistory);
+
+        return candidateOrder.filter((playerId) => {
+            if (playerId === RoomManager.playerId) return false;
+            if (exiledPlayers.includes(playerId)) return false;
+            return missionHistory[playerId]?.[lastMission] !== undefined;
         });
     },
 
-    // 队长选择任务队员
+    chooseActionType(actionType) {
+        if (!this.isCaptain()) return;
+
+        return RoomManager.roomRef.child('game').transaction((game) => {
+            if (!game || game.phase !== 'captainChoice') return game;
+            if (game.playerOrder?.[game.captainIndex || 0] !== RoomManager.playerId) return game;
+            const exileLimit = GAME_RULES.maxExilesPerGame;
+            if (
+                actionType === 'tribunal'
+                && Number.isInteger(exileLimit)
+                && (game.exiledPlayers || []).length >= exileLimit
+            ) {
+                return game;
+            }
+
+            game.actionType = actionType;
+            game.phase = actionType === 'mission' ? 'selectTeam' : 'selectExile';
+            game.selectedTeam = [];
+            game.exileTarget = null;
+            return game;
+        }, undefined, false);
+    },
+
     async selectTeamMember(playerId) {
         if (!this.isCaptain()) return;
 
-        const currentTeam = [...(this.gameData.selectedTeam || [])];
+        const currentTeam = [...(this.gameData?.selectedTeam || [])];
         const maxSize = this.getCurrentMissionSize();
+        const exiledPlayers = this.gameData?.exiledPlayers || [];
+
+        if (exiledPlayers.includes(playerId)) return;
 
         const index = currentTeam.indexOf(playerId);
         if (index > -1) {
@@ -90,370 +138,368 @@ const GameManager = {
         await RoomManager.roomRef.child('game/selectedTeam').set(currentTeam);
     },
 
-    // 队长选择放逐目标
     async selectExileTarget(playerId) {
         if (!this.isCaptain()) return;
+
+        const captainId = this.getCaptain().id;
+        const exiledPlayers = this.gameData?.exiledPlayers || [];
+        if (playerId === captainId || exiledPlayers.includes(playerId)) return;
+
         await RoomManager.roomRef.child('game/exileTarget').set(playerId);
     },
 
-    // 队长确认队伍 - 进入表决
-    async confirmTeamForVote() {
+    confirmTeamForVote() {
         if (!this.isCaptain()) return;
-        if ((this.gameData.selectedTeam?.length || 0) !== this.getCurrentMissionSize()) return;
 
-        await RoomManager.roomRef.child('game').update({
-            phase: 'vote',
-            votes: {},
-            voteType: 'mission'
-        });
+        return RoomManager.roomRef.child('game').transaction((game) => {
+            if (!game || game.phase !== 'selectTeam') return game;
+            if (game.playerOrder?.[game.captainIndex || 0] !== RoomManager.playerId) return game;
+            if ((game.selectedTeam || []).length !== this.getCurrentMissionSize(game)) return;
+
+            game.phase = 'vote';
+            game.votes = {};
+            game.voteType = 'mission';
+            return game;
+        }, undefined, false);
     },
 
-    // 队长确认放逐目标 - 进入表决
-    async confirmExileForVote() {
+    confirmExileForVote() {
         if (!this.isCaptain()) return;
-        if (!this.gameData.exileTarget) return;
 
-        await RoomManager.roomRef.child('game').update({
-            phase: 'vote',
-            votes: {},
-            voteType: 'exile'
-        });
+        return RoomManager.roomRef.child('game').transaction((game) => {
+            if (!game || game.phase !== 'selectExile') return game;
+            if (game.playerOrder?.[game.captainIndex || 0] !== RoomManager.playerId) return game;
+            if (!game.exileTarget) return;
+
+            game.phase = 'vote';
+            game.votes = {};
+            game.voteType = 'exile';
+            return game;
+        }, undefined, false);
     },
 
-    // 投票赞成/反对队伍
-    async castVote(approve) {
-        await RoomManager.roomRef.child('game/votes/' + RoomManager.playerId).set(approve);
+    castVote(approve) {
+        return RoomManager.roomRef.child('game').transaction((game) => {
+            if (!game || game.phase !== 'vote') return game;
 
-        // 检查是否所有人投完
-        this._checkVoteComplete();
-    },
+            const playerId = RoomManager.playerId;
+            const activePlayers = this.getActivePlayerIds(game);
+            if (!activePlayers.includes(playerId)) return;
 
-    // 检查投票是否完成
-    async _checkVoteComplete() {
-        const snapshot = await RoomManager.roomRef.child('game').once('value');
-        const game = snapshot.val();
+            game.votes = game.votes || {};
+            if (game.votes[playerId] !== undefined) return;
 
-        // 获取未流放的玩家
-        const activePlayers = game.playerOrder.filter(pid => !(game.exiledPlayers || []).includes(pid));
-        const votes = game.votes || {};
-        const votedCount = Object.keys(votes).filter(pid => activePlayers.includes(pid)).length;
+            game.votes[playerId] = !!approve;
 
-        if (votedCount >= activePlayers.length) {
-            // 所有人投完，计算结果
-            const approves = Object.entries(votes).filter(([pid, v]) => activePlayers.includes(pid) && v === true).length;
-            const rejects = activePlayers.length - approves;
-            const approved = approves > rejects;
+            const votedCount = Object.keys(game.votes).filter((pid) => activePlayers.includes(pid)).length;
+            if (votedCount >= activePlayers.length) {
+                const approves = activePlayers.filter((pid) => game.votes[pid] === true).length;
+                const rejects = activePlayers.length - approves;
 
-            // 保存投票结果并进入结果展示阶段
-            await RoomManager.roomRef.child('game').update({
-                phase: 'voteResult',
-                voteResultApproved: approved,
-                voteResultApproves: approves,
-                voteResultRejects: rejects
-            });
-            // 注意：10秒后推进到下一阶段的逻辑已移至 app.js 的 onGameChange 回调中
-            // 这样可以确保房主一定会收到 phase 变化并设置计时器
-        }
-    },
-
-    // 投票结果展示后继续游戏
-    async _proceedAfterVoteResult(game, approved) {
-        const voteType = game.voteType; // 'mission' 或 'exile'
-
-        if (approved) {
-            if (voteType === 'mission') {
-                // 投票通过，执行任务
-                await RoomManager.roomRef.child('game').update({
-                    phase: 'mission',
-                    missionCards: {},
-                    rejectCount: 0
-                });
-            } else if (voteType === 'exile') {
-                // 放逐投票通过，执行放逐
-                await this._executeExile(game);
+                game.phase = 'voteResult';
+                game.voteResultApproved = approves > rejects;
+                game.voteResultApproves = approves;
+                game.voteResultRejects = rejects;
             }
-        } else {
-            // 投票否决
-            const newRejectCount = (game.rejectCount || 0) + 1;
 
-            if (newRejectCount >= 5) {
-                // 连续否决5次，坏人直接获胜
-                await this._endGame('evil', '连续5次否决队伍');
-            } else {
-                // 更换队长（跳过被放逐的玩家）
-                const exiled = game.exiledPlayers || [];
-                const newCaptainIndex = this.getNextCaptainIndex(game.captainIndex, exiled);
-                await RoomManager.roomRef.child('game').update({
-                    phase: 'captainChoice',
-                    rejectCount: newRejectCount,
-                    captainIndex: newCaptainIndex,
-                    selectedTeam: [],
-                    exileTarget: null,
-                    actionType: null,
-                    votes: {}
-                });
+            return game;
+        }, undefined, false);
+    },
+
+    _applyEndedState(game, winners, reason) {
+        game.phase = 'ended';
+        game.winners = winners;
+        game.winReason = reason;
+        game.neutralWinnerId = null;
+        game.neutralWinnerRoleId = null;
+        return game;
+    },
+
+    _applyNeutralVictory(game, playerId, reason) {
+        game.phase = 'ended';
+        game.winners = 'neutral';
+        game.winReason = reason;
+        game.neutralWinnerId = playerId;
+        game.neutralWinnerRoleId = game.roles?.[playerId] || null;
+        return game;
+    },
+
+    _checkImmediateNeutralVictory(game) {
+        const exiledPlayers = game.exiledPlayers || [];
+
+        for (const [playerId, roleId] of Object.entries(game.roles || {})) {
+            const role = this.getRoleById(roleId);
+            if (role?.team !== 'neutral') continue;
+
+            const isExiled = exiledPlayers.includes(playerId);
+            if (isExiled) continue;
+
+            if (role.id === 'armsdealer' && game.currentMission >= 4) {
+                return this._applyNeutralVictory(game, playerId, '军火商存活进入第 5 轮任务');
             }
         }
+
+        return game;
     },
 
-    // 执行放逐
-    async _executeExile(game) {
-        const exileTarget = game.exileTarget;
-        if (!exileTarget) return;
+    _applyNextMissionState(game) {
+        game.phase = 'captainChoice';
+        game.currentMission = (game.currentMission || 0) + 1;
+        game.captainIndex = this.getNextCaptainIndex(
+            game.captainIndex || 0,
+            game.exiledPlayers || [],
+            game.playerOrder || []
+        );
+        game.selectedTeam = [];
+        game.exileTarget = null;
+        game.actionType = null;
+        game.voteType = null;
+        game.votes = {};
+        game.missionCards = {};
+        game.rejectCount = 0;
+        game.tribunalVotes = {};
+        game.tribunalInitiateVotes = {};
+        return this._checkImmediateNeutralVictory(game);
+    },
 
-        const exiledPlayers = [...(game.exiledPlayers || []), exileTarget];
-        await RoomManager.roomRef.child('game/exiledPlayers').set(exiledPlayers);
-        await RoomManager.roomRef.child('players/' + exileTarget + '/isExiled').set(true);
+    _applyExileResolution(game, exileTarget) {
+        if (!exileTarget) return game;
 
-        // 检查胜利条件
-        const exiledRole = this.getRoleById(game.roles[exileTarget]);
+        const exiledPlayers = Array.from(new Set([...(game.exiledPlayers || []), exileTarget]));
+        game.exiledPlayers = exiledPlayers;
 
-        // 检查是否所有坏人被放逐
-        const evilPlayers = Object.entries(game.roles)
-            .filter(([pid, roleId]) => {
-                const role = this.getRoleById(roleId);
-                return role.team === 'evil';
-            })
-            .map(([pid]) => pid);
+        const evilPlayers = Object.entries(game.roles || {})
+            .filter(([, roleId]) => this.getRoleById(roleId)?.team === 'evil')
+            .map(([playerId]) => playerId);
 
-        const allEvilExiled = evilPlayers.every(pid => exiledPlayers.includes(pid));
-
+        const allEvilExiled = evilPlayers.every((playerId) => exiledPlayers.includes(playerId));
         if (allEvilExiled) {
-            await this._endGame('good', '所有坏人被放逐');
-            return;
+            return this._applyEndedState(game, 'good', 'All evil players were exiled');
         }
 
-        // 检查好人数量
-        const remainingGood = Object.entries(game.roles)
-            .filter(([pid, roleId]) => {
-                const role = this.getRoleById(roleId);
-                return role.team === 'good' && !exiledPlayers.includes(pid);
-            }).length;
+        const neutralVictoryState = this._checkImmediateNeutralVictory(game);
+        if (neutralVictoryState.phase === 'ended') {
+            return neutralVictoryState;
+        }
 
-        const remainingEvil = Object.entries(game.roles)
-            .filter(([pid, roleId]) => {
-                const role = this.getRoleById(roleId);
-                return role.team === 'evil' && !exiledPlayers.includes(pid);
-            }).length;
+        const remainingGood = Object.entries(game.roles || {})
+            .filter(([playerId, roleId]) => this.getRoleById(roleId)?.team === 'good' && !exiledPlayers.includes(playerId))
+            .length;
+
+        const remainingEvil = Object.entries(game.roles || {})
+            .filter(([playerId, roleId]) => this.getRoleById(roleId)?.team === 'evil' && !exiledPlayers.includes(playerId))
+            .length;
 
         if (remainingGood <= remainingEvil) {
-            await this._endGame('evil', '好人数量不多于坏人');
-            return;
+            return this._applyEndedState(game, 'evil', 'Good players are no longer the majority');
         }
 
-        // 游戏继续，下一轮
-        await this._nextMission(game);
+        return this._applyNextMissionState(game);
     },
 
-    // 执行任务（成功或破坏）
-    async submitMissionCard(success) {
-        const myRole = this.getMyRole();
+    _proceedAfterVoteResult() {
+        return RoomManager.roomRef.child('game').transaction((game) => {
+            if (!game || game.phase !== 'voteResult') return game;
 
-        // 好人只能投成功（除非是特殊情况）
-        if (myRole.team === 'good' && !success) {
-            return; // 不允许好人投失败
-        }
+            if (game.voteResultApproved) {
+                if (game.voteType === 'mission') {
+                    game.phase = 'mission';
+                    game.missionCards = {};
+                    game.rejectCount = 0;
+                    return game;
+                }
 
-        await RoomManager.roomRef.child('game/missionCards/' + RoomManager.playerId).set(success);
+                if (game.voteType === 'exile') {
+                    return this._applyExileResolution(game, game.exileTarget);
+                }
 
-        // 记录任务投票历史（用于审判官查看）
-        const currentMission = this.gameData.currentMission;
-        await RoomManager.roomRef.child('game/missionHistory/' + RoomManager.playerId + '/' + currentMission).set(success);
-
-        // 检查任务是否完成
-        this._checkMissionComplete();
-    },
-
-    // 检查任务完成
-    async _checkMissionComplete() {
-        const snapshot = await RoomManager.roomRef.child('game').once('value');
-        const game = snapshot.val();
-
-        const team = game.selectedTeam || [];
-        const cards = game.missionCards || {};
-        const submittedCount = Object.keys(cards).filter(pid => team.includes(pid)).length;
-
-        if (submittedCount >= team.length) {
-            const failCount = Object.entries(cards).filter(([pid, v]) => team.includes(pid) && v === false).length;
-            const successCardCount = team.length - failCount;
-            const missionSuccess = failCount === 0;
-
-            const missionResults = [...(game.missionResults || [null, null, null, null, null])];
-            missionResults[game.currentMission] = missionSuccess;
-
-            await RoomManager.roomRef.child('game/missionResults').set(missionResults);
-
-            // 进入任务结果展示阶段
-            await RoomManager.roomRef.child('game').update({
-                phase: 'missionResult',
-                missionResultSuccess: missionSuccess,
-                missionResultSuccessCount: successCardCount,
-                missionResultFailCount: failCount
-            });
-        }
-    },
-
-    // 任务结果展示后继续游戏
-    async _proceedAfterMissionResult(game) {
-        const missionResults = game.missionResults || [];
-        const successCount = missionResults.filter(r => r === true).length;
-        const failedCount = missionResults.filter(r => r === false).length;
-
-        if (successCount >= 3) {
-            await RoomManager.roomRef.child('game/phase').set('assassin');
-        } else if (failedCount >= 3) {
-            await this._endGame('evil', '破坏3次任务');
-        } else {
-            await this._nextMission(game);
-        }
-    },
-
-    // 进入下一轮任务
-    async _nextMission(game) {
-        const exiled = game.exiledPlayers || [];
-        const newCaptainIndex = this.getNextCaptainIndex(game.captainIndex, exiled);
-        await RoomManager.roomRef.child('game').update({
-            phase: 'captainChoice',
-            currentMission: game.currentMission + 1,
-            captainIndex: newCaptainIndex,
-            selectedTeam: [],
-            exileTarget: null,
-            actionType: null,
-            votes: {},
-            missionCards: {},
-            rejectCount: 0
-        });
-    },
-
-    // 投票是否发起放逐会议
-    async voteToInitiateTribunal(agree) {
-        await RoomManager.roomRef.child('game/tribunalInitiateVotes/' + RoomManager.playerId).set(agree);
-
-        // 检查结果
-        const snapshot = await RoomManager.roomRef.child('game').once('value');
-        const game = snapshot.val();
-
-        const activePlayers = game.playerOrder.filter(pid => !(game.exiledPlayers || []).includes(pid));
-        const votes = game.tribunalInitiateVotes || {};
-        const votedCount = Object.keys(votes).filter(pid => activePlayers.includes(pid)).length;
-
-        if (votedCount >= activePlayers.length) {
-            const agrees = Object.entries(votes).filter(([pid, v]) => activePlayers.includes(pid) && v === true).length;
-
-            if (agrees > activePlayers.length / 2) {
-                // 发起放逐会议
-                await RoomManager.roomRef.child('game').update({
-                    phase: 'tribunal',
-                    tribunalVotes: {}
-                });
-            } else {
-                // 不发起，进入下一轮
-                await this._nextMission(game);
+                return game;
             }
-        }
+
+            const newRejectCount = (game.rejectCount || 0) + 1;
+            if (newRejectCount >= 5) {
+                return this._applyEndedState(game, 'evil', 'Five consecutive team rejections');
+            }
+
+            game.phase = 'captainChoice';
+            game.rejectCount = newRejectCount;
+            game.captainIndex = this.getNextCaptainIndex(
+                game.captainIndex || 0,
+                game.exiledPlayers || [],
+                game.playerOrder || []
+            );
+            game.selectedTeam = [];
+            game.exileTarget = null;
+            game.actionType = null;
+            game.voteType = null;
+            game.votes = {};
+            return game;
+        }, undefined, false);
     },
 
-    // 放逐投票
-    async castTribunalVote(targetPlayerId) {
-        await RoomManager.roomRef.child('game/tribunalVotes/' + RoomManager.playerId).set(targetPlayerId);
+    submitMissionCard(success) {
+        return RoomManager.roomRef.child('game').transaction((game) => {
+            if (!game || game.phase !== 'mission') return game;
 
-        // 检查结果
-        this._checkTribunalComplete();
+            const playerId = RoomManager.playerId;
+            const myRole = this.getRoleById(game.roles?.[playerId]);
+            const selectedTeam = game.selectedTeam || [];
+            const canSubmitFail = this.canRoleSubmitFail(myRole, playerId, game);
+
+            if (!myRole || !selectedTeam.includes(playerId)) return;
+
+            game.missionCards = game.missionCards || {};
+            if (game.missionCards[playerId] !== undefined) return;
+            if (!success && !canSubmitFail) return;
+
+            game.missionCards[playerId] = !!success;
+            if (!success && myRole?.id === 'scapegoat') {
+                game.neutralFailUsage = game.neutralFailUsage || {};
+                game.neutralFailUsage[playerId] = true;
+            }
+            game.missionHistory = game.missionHistory || {};
+            game.missionHistory[playerId] = game.missionHistory[playerId] || {};
+            game.missionHistory[playerId][game.currentMission] = !!success;
+
+            const submittedCount = Object.keys(game.missionCards).filter((pid) => selectedTeam.includes(pid)).length;
+            if (submittedCount >= selectedTeam.length) {
+                const failCount = Object.entries(game.missionCards)
+                    .filter(([pid, value]) => selectedTeam.includes(pid) && value === false)
+                    .length;
+
+                const successCardCount = selectedTeam.length - failCount;
+                const missionSuccess = failCount === 0;
+
+                game.missionResults = game.missionResults || [null, null, null, null, null];
+                game.missionResults[game.currentMission] = missionSuccess;
+                game.phase = 'missionResult';
+                game.missionResultSuccess = missionSuccess;
+                game.missionResultSuccessCount = successCardCount;
+                game.missionResultFailCount = failCount;
+            }
+
+            return game;
+        }, undefined, false);
     },
 
-    // 检查放逐投票完成
-    async _checkTribunalComplete() {
-        const snapshot = await RoomManager.roomRef.child('game').once('value');
-        const game = snapshot.val();
+    _proceedAfterMissionResult() {
+        return RoomManager.roomRef.child('game').transaction((game) => {
+            if (!game || game.phase !== 'missionResult') return game;
 
-        const activePlayers = game.playerOrder.filter(pid => !(game.exiledPlayers || []).includes(pid));
-        const votes = game.tribunalVotes || {};
-        const votedCount = Object.keys(votes).filter(pid => activePlayers.includes(pid)).length;
+            const missionResults = game.missionResults || [];
+            const successCount = missionResults.filter((result) => result === true).length;
+            const failedCount = missionResults.filter((result) => result === false).length;
 
-        if (votedCount >= activePlayers.length) {
-            // 统计票数
-            const voteCount = {};
-            for (const [voterId, targetId] of Object.entries(votes)) {
-                if (activePlayers.includes(voterId)) {
-                    voteCount[targetId] = (voteCount[targetId] || 0) + 1;
+            if (successCount >= 3) {
+                game.phase = 'assassin';
+                return game;
+            }
+
+            if (failedCount >= 3) {
+                return this._applyEndedState(game, 'evil', 'Three missions were sabotaged');
+            }
+
+            return this._applyNextMissionState(game);
+        }, undefined, false);
+    },
+
+    voteToInitiateTribunal(agree) {
+        return RoomManager.roomRef.child('game').transaction((game) => {
+            if (!game || game.phase !== 'tribunalPrompt') return game;
+
+            const playerId = RoomManager.playerId;
+            const activePlayers = this.getActivePlayerIds(game);
+            if (!activePlayers.includes(playerId)) return;
+
+            game.tribunalInitiateVotes = game.tribunalInitiateVotes || {};
+            if (game.tribunalInitiateVotes[playerId] !== undefined) return;
+
+            game.tribunalInitiateVotes[playerId] = !!agree;
+
+            const votedCount = Object.keys(game.tribunalInitiateVotes).filter((pid) => activePlayers.includes(pid)).length;
+            if (votedCount >= activePlayers.length) {
+                const agrees = Object.entries(game.tribunalInitiateVotes)
+                    .filter(([pid, vote]) => activePlayers.includes(pid) && vote === true)
+                    .length;
+
+                if (agrees > activePlayers.length / 2) {
+                    game.phase = 'tribunal';
+                    game.tribunalVotes = {};
+                } else {
+                    return this._applyNextMissionState(game);
                 }
             }
 
-            // 找最高票
-            let maxVotes = 0;
-            let exiledPlayer = null;
-            for (const [pid, count] of Object.entries(voteCount)) {
-                if (count > maxVotes) {
-                    maxVotes = count;
-                    exiledPlayer = pid;
+            return game;
+        }, undefined, false);
+    },
+
+    castTribunalVote(targetPlayerId) {
+        return RoomManager.roomRef.child('game').transaction((game) => {
+            if (!game || game.phase !== 'tribunal') return game;
+
+            const playerId = RoomManager.playerId;
+            const activePlayers = this.getActivePlayerIds(game);
+            if (!activePlayers.includes(playerId) || !activePlayers.includes(targetPlayerId)) return;
+            if (playerId === targetPlayerId) return;
+
+            game.tribunalVotes = game.tribunalVotes || {};
+            if (game.tribunalVotes[playerId] !== undefined) return;
+
+            game.tribunalVotes[playerId] = targetPlayerId;
+
+            const votedCount = Object.keys(game.tribunalVotes).filter((pid) => activePlayers.includes(pid)).length;
+            if (votedCount >= activePlayers.length) {
+                const voteCount = {};
+                for (const [voterId, candidateId] of Object.entries(game.tribunalVotes)) {
+                    if (!activePlayers.includes(voterId)) continue;
+                    voteCount[candidateId] = (voteCount[candidateId] || 0) + 1;
                 }
+
+                let maxVotes = 0;
+                const topCandidates = [];
+                for (const [candidateId, count] of Object.entries(voteCount)) {
+                    if (count > maxVotes) {
+                        maxVotes = count;
+                        topCandidates.length = 0;
+                        topCandidates.push(candidateId);
+                    } else if (count === maxVotes) {
+                        topCandidates.push(candidateId);
+                    }
+                }
+
+                if (topCandidates.length !== 1 && GAME_RULES.exileTieBehavior === 'noExile') {
+                    return this._applyNextMissionState(game);
+                }
+
+                return this._applyExileResolution(game, topCandidates[0] || null);
             }
 
-            // 放逐玩家
-            const exiledPlayers = [...(game.exiledPlayers || []), exiledPlayer];
-            await RoomManager.roomRef.child('game/exiledPlayers').set(exiledPlayers);
-            await RoomManager.roomRef.child('players/' + exiledPlayer + '/isExiled').set(true);
-
-            // 检查胜利条件
-            const exiledRole = this.getRoleById(game.roles[exiledPlayer]);
-
-            // 检查是否所有坏人被放逐
-            const evilPlayers = Object.entries(game.roles)
-                .filter(([pid, roleId]) => {
-                    const role = this.getRoleById(roleId);
-                    return role.team === 'evil';
-                })
-                .map(([pid]) => pid);
-
-            const allEvilExiled = evilPlayers.every(pid => exiledPlayers.includes(pid));
-
-            if (allEvilExiled) {
-                await this._endGame('good', '所有坏人被放逐');
-                return;
-            }
-
-            // 检查好人数量
-            const remainingGood = Object.entries(game.roles)
-                .filter(([pid, roleId]) => {
-                    const role = this.getRoleById(roleId);
-                    return role.team === 'good' && !exiledPlayers.includes(pid);
-                }).length;
-
-            const remainingEvil = Object.entries(game.roles)
-                .filter(([pid, roleId]) => {
-                    const role = this.getRoleById(roleId);
-                    return role.team === 'evil' && !exiledPlayers.includes(pid);
-                }).length;
-
-            if (remainingGood <= remainingEvil) {
-                await this._endGame('evil', '好人数量不多于坏人');
-                return;
-            }
-
-            // 游戏继续
-            await this._nextMission(game);
-        }
+            return game;
+        }, undefined, false);
     },
 
-    // 刺客刺杀
-    async assassinate(targetPlayerId) {
-        const myRole = this.getMyRole();
-        if (myRole?.id !== 'assassin') return;
+    assassinate(targetPlayerId) {
+        return RoomManager.roomRef.child('game').transaction((game) => {
+            if (!game || game.phase !== 'assassin') return game;
 
-        await RoomManager.roomRef.child('game/assassinTarget').set(targetPlayerId);
+            const playerId = RoomManager.playerId;
+            const myRole = this.getRoleById(game.roles?.[playerId]);
+            if (myRole?.id !== 'assassin') return;
+            if (game.assassinTarget) return;
 
-        // 检查是否刺中梅林
-        const snapshot = await RoomManager.roomRef.child('game/roles/' + targetPlayerId).once('value');
-        const targetRoleId = snapshot.val();
+            const targetRoleId = game.roles?.[targetPlayerId];
+            if (!targetRoleId) return;
 
-        if (targetRoleId === 'merlin') {
-            await this._endGame('evil', '刺客成功刺杀梅林');
-        } else {
-            await this._endGame('good', '刺客刺杀失败');
-        }
+            game.assassinTarget = targetPlayerId;
+            if (targetRoleId === 'merlin') {
+                return this._applyEndedState(game, 'evil', 'The assassin killed Merlin');
+            }
+
+            return this._applyEndedState(game, 'good', 'The assassin missed Merlin');
+        }, undefined, false);
     },
 
-    // 游戏结束
     async _endGame(winningTeam, reason) {
         await RoomManager.roomRef.child('game').update({
             phase: 'ended',
@@ -462,96 +508,95 @@ const GameManager = {
         });
     },
 
-    // 审判官使用技能
     async useInquisitorSkill(targetPlayerId) {
         const myRole = this.getMyRole();
         if (myRole?.id !== 'inquisitor') return null;
+        const usageResult = await RoomManager.roomRef.child('game').transaction((game) => {
+            if (!game) return game;
+            if (game.roles?.[RoomManager.playerId] !== 'inquisitor') return;
+            if (game.inquisitorUsed?.[RoomManager.playerId]) return;
+            if ((game.exiledPlayers || []).includes(RoomManager.playerId)) return;
 
-        // 检查是否已使用
-        if (this.gameData.inquisitorUsed?.[RoomManager.playerId]) {
+            const eligibleTargets = this.getInquisitorEligibleTargetIds(game);
+            if (!eligibleTargets.includes(targetPlayerId)) return;
+
+            game.inquisitorUsed = game.inquisitorUsed || {};
+            game.inquisitorUsed[RoomManager.playerId] = true;
+            return game;
+        }, undefined, false);
+
+        if (!usageResult.committed) {
             return null;
         }
 
-        // 标记已使用
-        await RoomManager.roomRef.child('game/inquisitorUsed/' + RoomManager.playerId).set(true);
+        const latestGame = usageResult.snapshot.val() || this.gameData;
+        const lastMission = this.getLastCompletedMissionIndex(latestGame);
 
-        // 获取目标玩家上一轮的任务投票
-        const lastMission = this.gameData.currentMission - 1;
-        if (lastMission < 0) {
+        if (lastMission === null) {
             return { noData: true };
         }
 
-        // 查看missionHistory（任务成功/失败票）
-        const missionVote = this.gameData.missionHistory?.[targetPlayerId]?.[lastMission];
-
-        // 如果该玩家不在上轮任务队伍中
-        if (missionVote === undefined) {
-            return {
-                player: this.players[targetPlayerId]?.name || targetPlayerId,
-                mission: lastMission + 1,
-                vote: '未参与任务'
-            };
-        }
+        const missionVote = latestGame?.missionHistory?.[targetPlayerId]?.[lastMission];
 
         return {
             player: this.players[targetPlayerId]?.name || targetPlayerId,
             mission: lastMission + 1,
-            vote: missionVote === true ? '✅ 任务成功' : '❌ 任务失败'
+            vote: missionVote === true ? 'Success' : 'Fail'
         };
     },
 
-    // 检查审判官能否使用技能
     canUseInquisitorSkill() {
         const myRole = this.getMyRole();
         if (myRole?.id !== 'inquisitor') return false;
         if (this.gameData?.inquisitorUsed?.[RoomManager.playerId]) return false;
-        if (this.gameData?.currentMission < 1) return false; // 第一轮没有历史
+        if ((this.gameData?.exiledPlayers || []).includes(RoomManager.playerId)) return false;
+        if (this.getLastCompletedMissionIndex(this.gameData) === null) return false;
+        if (this.getInquisitorEligibleTargetIds(this.gameData).length === 0) return false;
         return true;
     },
 
-    // 检查中立角色胜利条件
     checkNeutralWin() {
         if (!this.gameData || this.gameData.phase !== 'ended') return [];
 
-        const neutralWinners = [];
+        const exiledPlayers = this.gameData.exiledPlayers || [];
+        const exileCount = exiledPlayers.length;
+        const neutralResults = [];
 
-        for (const [pid, roleId] of Object.entries(this.gameData.roles)) {
+        for (const [playerId, roleId] of Object.entries(this.gameData.roles || {})) {
             const role = this.getRoleById(roleId);
-            if (role.team !== 'neutral') continue;
+            if (role?.team !== 'neutral') continue;
 
-            const isExiled = (this.gameData.exiledPlayers || []).includes(pid);
-            const exileCount = (this.gameData.exiledPlayers || []).length;
-            const missionCount = this.gameData.missionResults.filter(r => r !== null).length;
-
+            const isExiled = exiledPlayers.includes(playerId);
             let won = false;
             let reason = '';
 
             switch (role.id) {
                 case 'scapegoat':
                     won = isExiled;
-                    reason = won ? '被放逐 - 胜利!' : '未被放逐';
+                    reason = won ? '被放逐' : '未被放逐';
                     break;
                 case 'armsdealer':
-                    won = missionCount >= 5 && !isExiled;
-                    reason = won ? '游戏进行到第5轮且存活 - 胜利!' : (isExiled ? '被放逐' : '游戏未进行到第5轮');
+                    won = this.gameData.neutralWinnerId === playerId || (!isExiled && this.gameData.currentMission >= 4);
+                    reason = won ? '存活进入了第 5 轮任务' : (isExiled ? '被放逐' : '未能存活进入第 5 轮任务');
                     break;
                 case 'cultist':
-                    won = exileCount >= 2 && !isExiled;
-                    reason = won ? '2人被流放且存活 - 胜利!' : (isExiled ? '被放逐' : `只有${exileCount}人被流放`);
+                    won = exileCount >= 3 && !isExiled;
+                    reason = won ? '至少 3 名玩家被放逐且你存活到终局' : (isExiled ? '被放逐' : '被放逐人数不足 3 人');
                     break;
             }
 
-            neutralWinners.push({
-                playerId: pid,
-                playerName: this.players[pid]?.name || pid,
-                role: role,
-                won: won,
-                reason: reason
+            neutralResults.push({
+                playerId,
+                playerName: this.players[playerId]?.name || playerId,
+                role,
+                won,
+                reason
             });
         }
 
-        return neutralWinners;
+        return neutralResults;
     }
 };
 
+window.GAME_RULES = GAME_RULES;
 window.GameManager = GameManager;
