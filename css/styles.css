@@ -598,7 +598,6 @@ input[type="text"]::placeholder {
 
 .game-player.exiled {
     opacity: 0.4;
-    pointer-events: none;
 }
 
 .game-player.offline {
@@ -614,6 +613,94 @@ input[type="text"]::placeholder {
     font-size: 0.75rem;
     color: var(--text-muted);
 }
+
+[hidden] { display: none !important; }
+
+.connection-banner {
+    position: sticky;
+    top: 0;
+    z-index: 110;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    padding: 9px 16px;
+    background: #edf8f3;
+    color: #176646;
+    border-bottom: 1px solid #cee8db;
+    font-size: 0.8rem;
+}
+
+.connection-banner:not([data-state="connected"]) {
+    background: #fff5df;
+    color: #845510;
+    border-color: #f3ddb0;
+}
+
+.connection-banner button, .notes-heading button {
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 1px solid currentColor;
+    border-radius: 7px;
+    padding: 6px 10px;
+    cursor: pointer;
+}
+
+.player-notes-launcher {
+    padding: 6px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--text-primary);
+    font: inherit;
+    cursor: pointer;
+}
+
+.player-note-badge {
+    display: block;
+    max-width: 100%;
+    margin: 10px auto 0;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: #fff;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 0.75rem;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+}
+
+.player-note-badge[data-judgment="good"] { color: #17734d; border-color: #91c9ae; }
+.player-note-badge[data-judgment="suspicious"] { color: #92610c; border-color: #dec28c; }
+.player-note-badge[data-judgment="evil"] { color: #b43843; border-color: #e2a1a7; }
+
+.player-notes-dialog {
+    margin: auto;
+    width: min(520px, calc(100vw - 24px));
+    max-height: calc(100dvh - 40px);
+    padding: 22px;
+    color: var(--text-primary);
+    background: #fff;
+    border: 1px solid var(--border-color);
+    border-radius: 18px;
+    box-shadow: 0 20px 70px #17213833;
+}
+
+.player-notes-dialog::backdrop { background: #18223466; }
+.notes-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; position: sticky; top: -22px; background: #fff; padding: 8px 0; z-index: 1; }
+.notes-heading h3 { margin: 0; }
+.notes-heading button { min-width: 36px; min-height: 36px; border-color: var(--border-color); }
+.player-notes-dialog > .hint { margin: 12px 0; line-height: 1.7; }
+.notes-player { padding: 14px 0; border-top: 1px solid var(--border-color); }
+.notes-player-name { font-weight: 600; overflow-wrap: anywhere; margin-bottom: 10px; }
+.notes-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.notes-fields label { min-width: 0; font-size: 0.75rem; color: var(--text-secondary); }
+.notes-fields select { width: 100%; min-width: 0; margin-top: 6px; padding: 10px 8px; font: inherit; font-size: 0.85rem; }
+.player-notes-dialog > .btn { margin-top: 12px; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 3px; }
 
 /* ===== Action Panel ===== */
 .action-panel {

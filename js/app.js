@@ -7,6 +7,7 @@ const App = {
     roomActionPending: false,
     sessionRestorePending: true,
     orphanedGameAbortPending: false,
+    pendingActions: new Set(),
 
     init() {
         this.setupBrokerSelector();
@@ -30,12 +31,16 @@ const App = {
     },
 
     async runGameAction(action, failureLabel = '操作失败') {
+        if (this.pendingActions.has(failureLabel)) return null;
+        this.pendingActions.add(failureLabel);
         try {
             return await action();
         } catch (error) {
             console.warn('[App] Game action failed', error);
             UI.showToast(`${failureLabel}: ${error.message || error}`);
             return null;
+        } finally {
+            this.pendingActions.delete(failureLabel);
         }
     },
 
@@ -64,6 +69,20 @@ const App = {
     },
 
     bindEvents() {
+        document.getElementById('reconnect-btn').addEventListener('click', () => database.reconnectNow());
+        document.getElementById('player-notes-btn').addEventListener('click', () => UI.openPlayerNotes());
+        document.getElementById('player-notes-close').addEventListener('click', () => document.getElementById('player-notes-dialog').close());
+        document.getElementById('player-notes-clear').addEventListener('click', () => {
+            PlayerNotes.clear();
+            UI.renderPlayerNotes();
+        });
+        window.addEventListener('avalon-room-resumed', () => {
+            if (!RoomManager.roomRef) return;
+            if (GameManager.gameData) window.onGameChange(GameManager.gameData);
+            if (RoomManager.isHost && RoomManager.roomState === 'playing' && GameManager.gameData?.phase !== 'ended') {
+                database.sendAction('reconcilePresence', {}).catch(() => undefined);
+            }
+        });
         document.getElementById('create-room-btn').addEventListener('click', () => this.createRoom());
         document.getElementById('join-room-btn').addEventListener('click', () => this.joinRoom());
 
@@ -119,6 +138,7 @@ const App = {
             UI.showToast('已恢复房间连接');
         } catch (error) {
             console.warn('[App] Session restore failed', error);
+            UI.showToast('恢复连接失败，已保留房间记录；可刷新重试。', 6000);
         }
     },
 
@@ -371,9 +391,11 @@ const App = {
     },
 
     async setReady() {
-        await RoomManager.setReady(true);
-        document.getElementById('ready-btn').style.display = 'none';
-        UI.showToast('已准备，等待其他玩家');
+        await this.runGameAction(async () => {
+            await RoomManager.setReady(true);
+            document.getElementById('ready-btn').style.display = 'none';
+            UI.showToast('已准备，等待其他玩家');
+        }, '准备失败');
     },
 
     castVote(approve) {
@@ -481,6 +503,12 @@ const App = {
         }
     },
 
+    refreshSelectionView() {
+        if (RoomManager.currentRoom && ['selectTeam', 'selectExile'].includes(GameManager.gameData?.phase)) {
+            window.onGameChange(GameManager.gameData);
+        }
+    },
+
     selectTeamMember(playerId) {
         return this.runGameAction(() => GameManager.selectTeamMember(playerId));
     },
@@ -501,6 +529,8 @@ const App = {
         return this.runGameAction(() => GameManager.confirmExileForVote());
     }
 };
+
+window.onSelectionDraftChange = () => App.refreshSelectionView();
 
 window.onPlayersChange = (players) => {
     GameManager.players = players;
@@ -534,6 +564,9 @@ window.onPlayersChange = (players) => {
             }, undefined, false);
         }
     }
+
+    App.refreshSelectionView();
+    if (document.getElementById('player-notes-dialog')?.open) UI.renderPlayerNotes();
 
     if (RoomManager.isHost && RoomManager.roomState === 'playing' && GameManager.gameData) {
         database.sendAction('reconcilePresence', {}).catch((error) => {
@@ -573,6 +606,8 @@ window.onSettingsChange = (settings) => {
 
 window.onGameChange = (game) => {
     GameManager.gameData = game;
+    PlayerNotes.useGame(database.brokerUrl, RoomManager.currentRoom, RoomManager.playerId, game);
+    GameManager.syncSelectionDraft(game);
 
     if (!game) {
         App.clearPhaseTimers();
@@ -651,20 +686,23 @@ window.onGameChange = (game) => {
             const captain = GameManager.getCaptain(game);
             const isCaptain = GameManager.isCaptain(game);
             const teamSize = GameManager.getCurrentMissionSize(game);
-            const selectedCount = (game.selectedTeam || []).length;
+            const selectionView = GameManager.getSelectionView(game);
+            const submitting = !!GameManager.selectionDraft?.submitting;
+            const selectedCount = (selectionView.selectedTeam || []).length;
 
             document.getElementById('game-status-text').textContent = '队长选择任务队员';
             document.getElementById('captain-info').textContent = `当前队长: ${captain.name}`;
 
-            UI.renderGamePlayers(GameManager.players, game, isCaptain, (playerId) => App.selectTeamMember(playerId));
+            UI.renderGamePlayers(GameManager.players, selectionView, isCaptain && !submitting, (playerId) => App.selectTeamMember(playerId));
 
             if (isCaptain) {
                 UI.renderActionPanel(`
                     <p style="text-align: center; margin-bottom: 12px;">
                         选择 ${teamSize} 名队员（已选 ${selectedCount}/${teamSize}）
                     </p>
-                    <button class="btn btn-primary" onclick="App.confirmTeamForVote()" ${selectedCount === teamSize ? '' : 'disabled'}>
-                        <span>确认队伍并投票</span>
+                    <p class="hint">本地选择，确认后向全员公布队伍</p>
+                    <button class="btn btn-primary" onclick="App.confirmTeamForVote()" ${selectedCount === teamSize && !submitting ? '' : 'disabled'}>
+                        <span>${submitting ? '正在提交…' : '确认队伍并投票'}</span>
                     </button>
                 `);
             } else {
@@ -687,19 +725,22 @@ window.onGameChange = (game) => {
 
             const captain = GameManager.getCaptain(game);
             const isCaptain = GameManager.isCaptain(game);
-            const hasTarget = !!game.exileTarget;
-            const targetName = hasTarget ? (GameManager.players[game.exileTarget]?.name || game.exileTarget) : '未选择';
+            const selectionView = GameManager.getSelectionView(game);
+            const submitting = !!GameManager.selectionDraft?.submitting;
+            const hasTarget = !!selectionView.exileTarget;
+            const targetName = hasTarget ? (GameManager.players[selectionView.exileTarget]?.name || selectionView.exileTarget) : '未选择';
 
             document.getElementById('game-status-text').textContent = '队长选择放逐目标';
             document.getElementById('captain-info').textContent = `当前队长: ${captain.name}`;
 
-            UI.renderExileTargetSelection(GameManager.players, game, isCaptain, (playerId) => App.selectExileTarget(playerId));
+            UI.renderExileTargetSelection(GameManager.players, selectionView, isCaptain && !submitting, (playerId) => App.selectExileTarget(playerId));
 
             if (isCaptain) {
                 UI.renderActionPanel(`
                     <p style="text-align: center; margin-bottom: 12px;">放逐目标: ${UI.escapeHTML(targetName)}</p>
-                    <button class="btn btn-danger" onclick="App.confirmExileForVote()" ${hasTarget ? '' : 'disabled'}>
-                        <span>确认放逐并投票</span>
+                    <p class="hint">本地选择，确认后向全员公布目标</p>
+                    <button class="btn btn-danger" onclick="App.confirmExileForVote()" ${hasTarget && !submitting ? '' : 'disabled'}>
+                        <span>${submitting ? '正在提交…' : '确认放逐并投票'}</span>
                     </button>
                 `);
             } else {

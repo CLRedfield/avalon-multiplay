@@ -1,8 +1,12 @@
 (function initializeMqttDatabase() {
-    const TOPIC_PREFIX = 'avalon-multiplay/v3';
-    const PROTOCOL_VERSION = 1;
+    const TOPIC_PREFIX = 'avalon-multiplay/v4';
+    const PROTOCOL_VERSION = 2;
     const INITIAL_STATE_WAIT_MS = 1200;
-    const REQUEST_TIMEOUT_MS = 8000;
+    const REQUEST_TIMEOUT_MS = 75000;
+    const HEARTBEAT_MS = 5000;
+    const PEER_TIMEOUT_MS = 20000;
+    const PLAYER_GRACE_MS = 15000;
+    const HOST_GRACE_MS = 60000;
     const MAX_TRANSACTION_RETRIES = 6;
 
     function cloneValue(value) {
@@ -55,6 +59,7 @@
             value: command.value === undefined ? null : command.value,
             action: command.action || null,
             payload: command.payload === undefined ? null : command.payload,
+            context: command.context || null,
             at: command.at
         });
     }
@@ -202,6 +207,27 @@
             this.privateListeners = [];
             this.hostSecrets = null;
             this.commandQueue = Promise.resolve();
+            this.messageQueue = Promise.resolve();
+            this.peers = new Map();
+            this.offlineTimers = new Map();
+            this.heartbeatTimer = null;
+            this.syncPromise = null;
+            this.ready = false;
+            this.lastPublishedVersion = null;
+            this.lastEchoAt = 0;
+            this.connectionStatus = { state: 'idle' };
+            this.retryDelayMs = 800;
+            this.requestTimeoutMs = REQUEST_TIMEOUT_MS;
+            this.playerGraceMs = PLAYER_GRACE_MS;
+            this.hostGraceMs = HOST_GRACE_MS;
+            this.wakeHandler = () => {
+                if (this.ready && this.connected && Date.now() - this.lastEchoAt < HEARTBEAT_MS * 2) {
+                    this._announcePresence('heartbeat').catch(() => undefined);
+                } else this.reconnectNow();
+            };
+            this.visibilityHandler = () => {
+                if (typeof document !== 'undefined' && document.visibilityState === 'visible') this.wakeHandler();
+            };
         }
 
         ref(path) {
@@ -426,13 +452,122 @@
         }
 
         _emitStatus(state, message) {
+            this.connectionStatus = { state, message, brokerUrl: this.brokerUrl };
             window.dispatchEvent(new CustomEvent('avalon-broker-status', {
-                detail: {
-                    state,
-                    message,
-                    brokerUrl: this.brokerUrl
-                }
+                detail: this.connectionStatus
             }));
+        }
+
+        _checkpointKey() {
+            return `avalon_checkpoint_${this.brokerUrl}_${this.roomCode}_${this.playerId}`;
+        }
+
+        _persistCheckpoint() {
+            if (!this.roomCode || !this.envelope) return;
+            try {
+                // One atomic write keeps the public state, secret cards and receipts together.
+                localStorage.setItem(this._checkpointKey(), JSON.stringify({
+                    envelope: this.envelope,
+                    secrets: this.envelope.room?.host === this.playerId ? this.hostSecrets : null,
+                    receipts: [...this.processedRequests.entries()]
+                }));
+            } catch (error) {
+                console.warn('[MQTT] Recovery checkpoint unavailable', error);
+            }
+        }
+
+        _restoreCheckpoint() {
+            try {
+                const saved = JSON.parse(localStorage.getItem(this._checkpointKey()) || 'null');
+                if (!saved?.envelope || saved.envelope.room?.code !== this.roomCode) return;
+                this.envelope = saved.envelope;
+                this.processedRequests = new Map(saved.receipts || []);
+                if (saved.envelope.room.host === this.playerId) this.hostSecrets = saved.secrets;
+            } catch (error) {
+                console.warn('[MQTT] Recovery checkpoint could not be read', error);
+            }
+        }
+
+        reconnectNow() {
+            if (!this.client) return;
+            if (!this.connected) this.client.reconnect?.();
+            else this._synchronize().catch(() => undefined);
+        }
+
+        async _acquireSessionLock() {
+            if (typeof navigator === 'undefined' || !navigator.locks?.request) return;
+            const name = `avalon-session-${this.brokerUrl}-${this.roomCode}-${this.playerId}`;
+            await new Promise((resolve, reject) => {
+                navigator.locks.request(name, { ifAvailable: true }, async (lock) => {
+                    if (!lock) {
+                        reject(new Error('此玩家已在另一个标签页连接；请回到原页面，或关闭原页面后刷新'));
+                        return;
+                    }
+                    await new Promise((release) => {
+                        this.releaseSessionLock = release;
+                        resolve();
+                    });
+                }).catch(reject);
+            });
+        }
+
+        async _synchronize() {
+            if (this.syncPromise) return this.syncPromise;
+            const generation = this.connectionGeneration;
+            this.ready = false;
+            this._emitStatus('syncing', '正在恢复房间状态…');
+            this.syncPromise = (async () => {
+                await this._waitForInitialState();
+                if (generation !== this.connectionGeneration || !this.connected) return;
+                if (this.envelope?.room?.host === this.playerId) {
+                    // Republish the durable checkpoint after broker data loss or a refresh.
+                    await this._publishState(this.envelope);
+                }
+                if (this.envelope?.room?.players?.[this.playerId]) {
+                    const response = await this._requestAction('sync', {}, this.envelope.version);
+                    if (!response.ok) throw new Error(response.error || '恢复房间失败');
+                    if (response.envelope) this._acceptEnvelope(response.envelope);
+                }
+                if (generation !== this.connectionGeneration || !this.connected) return;
+                this.ready = true;
+                this._emitStatus('connected', '已连接 · 状态已同步');
+                window.dispatchEvent(new CustomEvent('avalon-room-resumed'));
+            })().finally(() => {
+                if (generation === this.connectionGeneration) this.syncPromise = null;
+            });
+            return this.syncPromise;
+        }
+
+        _startHeartbeat() {
+            clearTimeout(this.heartbeatTimer);
+            const generation = this.connectionGeneration;
+            const tick = async () => {
+                if (generation !== this.connectionGeneration || !this.connected) return;
+                try {
+                    await this._announcePresence('heartbeat');
+                    const now = Date.now();
+                    // A broken local socket must never elect this client as a new host.
+                    if (now - this.lastEchoAt > PEER_TIMEOUT_MS) {
+                        this.ready = false;
+                        this._emitStatus('offline', '连接无响应，正在重新连接…');
+                        this.client.reconnect?.();
+                    } else {
+                        for (const [id, player] of Object.entries(this.envelope?.room?.players || {})) {
+                            const peer = this.peers.get(id);
+                            if (id !== this.playerId && !player.left && player.connected !== false
+                                && now - (peer?.seenAt || this.connectedAt) > PEER_TIMEOUT_MS) {
+                                this._scheduleOffline(id, player.transportId);
+                            }
+                        }
+                    }
+                } catch (error) {
+                    // MQTT's reconnect loop owns transport recovery.
+                }
+                if (generation === this.connectionGeneration && this.connected) {
+                    this.heartbeatTimer = setTimeout(tick, HEARTBEAT_MS);
+                }
+            };
+            this.heartbeatTimer = setTimeout(tick, HEARTBEAT_MS);
         }
 
         async connectForRoom(roomCode, playerId, brokerUrl = null) {
@@ -466,6 +601,7 @@
             this.initialStateKnown = false;
             await this._ensureCryptoIdentity(playerId);
             this._restoreHostSecrets();
+            this._restoreCheckpoint();
             this.connectionGeneration += 1;
             const generation = this.connectionGeneration;
 
@@ -487,6 +623,7 @@
                 signature: await this._signValue(willBody)
             });
 
+            await this._acquireSessionLock();
             this._emitStatus('connecting', `正在连接 ${selectedBroker}`);
 
             this.connectionPromise = new Promise((resolve, reject) => {
@@ -501,9 +638,11 @@
                 this.client = mqtt.connect(selectedBroker, {
                     clientId: this.transportId,
                     clean: true,
-                    keepalive: 30,
+                    keepalive: 10,
                     connectTimeout: 8000,
-                    reconnectPeriod: 2500,
+                    reconnectPeriod: 750,
+                    resubscribe: false,
+                    queueQoSZero: false,
                     protocolVersion: 4,
                     will: {
                         topic: presenceTopic,
@@ -515,6 +654,9 @@
 
                 this.client.on('connect', () => {
                     if (generation !== this.connectionGeneration) return;
+                    this.connectedAt = Date.now();
+                    this.lastEchoAt = Date.now();
+                    this.ready = false;
                     const topics = [stateTopic, commandTopic, responseTopic, presenceTopic, privateTopic];
                     this.client.subscribe(topics, { qos: 1 }, (error) => {
                         if (error) {
@@ -527,15 +669,17 @@
                             return;
                         }
 
-                        this._announcePresence('online').catch(() => undefined);
-
                         clearTimeout(this.initialStateTimer);
                         this.initialStateTimer = setTimeout(() => {
                             if (generation === this.connectionGeneration) {
                                 this._markInitialStateKnown();
                             }
                         }, INITIAL_STATE_WAIT_MS);
-                        this._emitStatus('connected', `已连接 ${selectedBroker}`);
+                        this._announcePresence('online').catch(() => undefined);
+                        this._startHeartbeat();
+                        this._synchronize().catch((error) => {
+                            this._emitStatus('error', error.message || '同步失败，请重试连接');
+                        });
 
                         if (!settled) {
                             settled = true;
@@ -547,7 +691,15 @@
 
                 this.client.on('message', (topic, payload) => {
                     if (generation !== this.connectionGeneration) return;
-                    this._handleMessage(topic, payload).catch((error) => {
+                    // Liveness must not wait behind state publication acknowledgments.
+                    if (topic === presenceTopic) {
+                        Promise.resolve().then(() => this._handlePresence(JSON.parse(payload.toString())))
+                            .catch((error) => console.warn('[MQTT] Presence handling failed', error));
+                        return;
+                    }
+                    this.messageQueue = this.messageQueue.then(() => {
+                        if (generation === this.connectionGeneration) return this._handleMessage(topic, payload);
+                    }).catch((error) => {
                         console.warn('[MQTT] Message handling failed', error);
                     });
                 });
@@ -559,7 +711,18 @@
 
                 this.client.on('offline', () => {
                     if (generation !== this.connectionGeneration) return;
+                    this.ready = false;
+                    clearTimeout(this.heartbeatTimer);
+                    this._clearOfflineTimers();
                     this._emitStatus('offline', '联机服务器已断开');
+                });
+
+                this.client.on('close', () => {
+                    if (generation !== this.connectionGeneration) return;
+                    this.ready = false;
+                    clearTimeout(this.heartbeatTimer);
+                    this._clearOfflineTimers();
+                    this._emitStatus('offline', '连接已断开，正在自动重连…');
                 });
 
                 this.client.on('error', (error) => {
@@ -571,6 +734,10 @@
 
             try {
                 await this.connectionPromise;
+                await this.syncPromise;
+                window.addEventListener?.('online', this.wakeHandler);
+                window.addEventListener?.('pageshow', this.wakeHandler);
+                if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.visibilityHandler);
             } catch (error) {
                 await this.disconnectRoom();
                 throw error;
@@ -579,14 +746,26 @@
 
         async disconnectRoom() {
             this.connectionGeneration += 1;
+            this.ready = false;
+            this.lastPublishedVersion = null;
+            this.releaseSessionLock?.();
+            this.releaseSessionLock = null;
+            this.syncPromise = null;
+            clearTimeout(this.heartbeatTimer);
+            this._clearOfflineTimers();
+            this.peers.clear();
+            window.removeEventListener?.('online', this.wakeHandler);
+            window.removeEventListener?.('pageshow', this.wakeHandler);
+            if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', this.visibilityHandler);
             clearTimeout(this.initialStateTimer);
             this.initialStateTimer = null;
             const client = this.client;
             this.client = null;
             this.connectionPromise = null;
 
-            for (const { reject, timeoutId } of this.pendingRequests.values()) {
+            for (const { reject, timeoutId, retryId } of this.pendingRequests.values()) {
                 clearTimeout(timeoutId);
+                clearTimeout(retryId);
                 reject(new Error('联机连接已关闭'));
             }
             this.pendingRequests.clear();
@@ -783,6 +962,7 @@
             if (!this.connected) {
                 throw new Error('未连接联机服务器');
             }
+            if (!this.ready) throw new Error('正在恢复连接，请等待状态同步后重试');
 
             const requestId = createId('req_');
             const command = {
@@ -801,25 +981,18 @@
                 at: Date.now()
             };
             command.signature = await this._signCommand(command);
-
-            return new Promise((resolve, reject) => {
-                const timeoutId = setTimeout(() => {
-                    this.pendingRequests.delete(requestId);
-                    reject(new Error('等待房主响应超时'));
-                }, REQUEST_TIMEOUT_MS);
-
-                this.pendingRequests.set(requestId, { resolve, reject, timeoutId });
-                this._publishRaw(this._topic('commands'), JSON.stringify(command), { qos: 1, retain: false })
-                    .catch((error) => {
-                        clearTimeout(timeoutId);
-                        this.pendingRequests.delete(requestId);
-                        reject(error);
-                    });
-            });
+            return this._sendRequest(command);
         }
 
         async sendAction(action, payload = {}, options = {}) {
             if (!this.connected) throw new Error('未连接联机服务器');
+            if (!this.ready) throw new Error('正在恢复连接，请等待状态同步后重试');
+
+            const game = this.envelope?.room?.game;
+            const context = game?.gameId ? {
+                gameId: game.gameId, phase: game.phase,
+                currentMission: game.currentMission, selectionRevision: game.selectionRevision || 0
+            } : null;
 
             let actionPayload = cloneValue(payload);
             if (options.sealToHost) {
@@ -836,7 +1009,8 @@
                 const response = await this._requestAction(
                     action,
                     actionPayload,
-                    this.envelope?.version || 0
+                    this.envelope?.version || 0,
+                    context
                 );
 
                 if (response.envelope) this._acceptEnvelope(response.envelope);
@@ -849,7 +1023,7 @@
             throw new Error('联机动作冲突过多，请重试');
         }
 
-        async _requestAction(action, actionPayload, baseVersion) {
+        async _requestAction(action, actionPayload, baseVersion, context = null) {
             const requestId = createId('act_');
             const command = {
                 protocol: PROTOCOL_VERSION,
@@ -863,23 +1037,41 @@
                 baseVersion,
                 action,
                 payload: actionPayload,
+                context,
                 at: Date.now()
             };
             command.signature = await this._signCommand(command);
+            return this._sendRequest(command);
+        }
 
+        _sendRequest(command) {
+            const generation = this.connectionGeneration;
             return new Promise((resolve, reject) => {
+                const requestId = command.requestId;
                 const timeoutId = setTimeout(() => {
+                    clearTimeout(this.pendingRequests.get(requestId)?.retryId);
                     this.pendingRequests.delete(requestId);
-                    reject(new Error('等待房主响应超时'));
-                }, REQUEST_TIMEOUT_MS);
+                    reject(new Error('等待房主确认超时，请恢复连接后检查当前状态'));
+                }, this.requestTimeoutMs);
 
-                this.pendingRequests.set(requestId, { resolve, reject, timeoutId });
-                this._publishRaw(this._topic('commands'), JSON.stringify(command), { qos: 1, retain: false })
-                    .catch((error) => {
-                        clearTimeout(timeoutId);
-                        this.pendingRequests.delete(requestId);
-                        reject(error);
-                    });
+                const pending = { resolve, reject, timeoutId, retryId: null, attempts: 0, command };
+                this.pendingRequests.set(requestId, pending);
+                const send = () => {
+                    if (generation !== this.connectionGeneration || !this.pendingRequests.has(requestId)) return;
+                    if (this.connected) {
+                        pending.attempts++;
+                        if (this.envelope?.room?.host === this.playerId) {
+                            // Host actions use the same serial authority queue without a broker round trip.
+                            const task = this.commandQueue.then(() => this._handleCommand(command));
+                            this.commandQueue = task.catch(() => undefined);
+                        } else {
+                            this._publishRaw(this._topic('commands'), JSON.stringify(command), { qos: 1, retain: false })
+                                .catch(() => undefined);
+                        }
+                    }
+                    pending.retryId = setTimeout(send, Math.min(4000, this.retryDelayMs * 2 ** Math.min(pending.attempts, 3)));
+                };
+                send();
             });
         }
 
@@ -887,9 +1079,13 @@
             const publicKey = this.envelope?.room?.players?.[playerId]?.encryptionPublicKey;
             if (!publicKey) throw new Error('目标玩家的安全通道尚未就绪');
             const sealed = await this._sealForPublicKey(value, publicKey);
+            const body = {
+                protocol: PROTOCOL_VERSION, playerId, sealed,
+                signerPlayerId: this.playerId, gameId: this.envelope?.room?.game?.gameId || null
+            };
             await this._publishRaw(
                 this._topic(`private/${playerId}`),
-                JSON.stringify({ protocol: PROTOCOL_VERSION, playerId, sealed }),
+                JSON.stringify({ ...body, signature: await this._signValue(body) }),
                 { qos: 1, retain: options.retain !== false }
             );
         }
@@ -909,35 +1105,10 @@
                 }
 
                 const envelope = JSON.parse(payload.toString());
-                if (envelope.stateSignature && envelope.signerPlayerId) {
-                    const previousRoom = this.envelope?.room;
-                    const signerId = envelope.signerPlayerId;
-                    const signerKey = previousRoom?.players?.[signerId]?.authPublicKey
-                        || envelope.room?.players?.[signerId]?.authPublicKey;
-                    if (!signerKey) return;
-                    const stateBody = {
-                        protocol: envelope.protocol,
-                        version: envelope.version,
-                        updatedAt: envelope.updatedAt,
-                        room: envelope.room,
-                        signerPlayerId: signerId
-                    };
-                    if (!await this._verifyValue(stateBody, envelope.stateSignature, signerKey)) return;
-
-                    if (!previousRoom && envelope.room && envelope.room.host !== signerId) return;
-
-                    if (previousRoom && signerId !== previousRoom.host) {
-                        const expectedSuccessor = this._getNextHostId(previousRoom, previousRoom.host);
-                        const validHandoff = envelope.room?.host === signerId
-                            && expectedSuccessor === signerId
-                            && envelope.room?.players?.[previousRoom.host]?.connected === false;
-                        if (!validHandoff) return;
-                    }
-                } else {
-                    return;
+                if (await this._validateEnvelope(envelope)) {
+                    this._acceptEnvelope(envelope);
+                    this._markInitialStateKnown();
                 }
-                this._acceptEnvelope(envelope);
-                this._markInitialStateKnown();
                 return;
             }
 
@@ -947,7 +1118,6 @@
                 this.commandQueue = commandTask.catch((error) => {
                     console.warn('[MQTT] Command handling failed', error);
                 });
-                await commandTask;
                 return;
             }
 
@@ -955,7 +1125,14 @@
                 const response = JSON.parse(payload.toString());
                 const pending = this.pendingRequests.get(response.requestId);
                 if (!pending) return;
+                const { signature, ...body } = response;
+                const hostId = this.envelope?.room?.host;
+                if (response.signerPlayerId !== hostId || !await this._verifyValue(
+                    body, signature, this.envelope?.room?.players?.[hostId]?.authPublicKey
+                )) return;
+                if (response.envelope && !await this._validateEnvelope(response.envelope)) return;
                 clearTimeout(pending.timeoutId);
+                clearTimeout(pending.retryId);
                 this.pendingRequests.delete(response.requestId);
                 pending.resolve(response);
                 return;
@@ -965,6 +1142,12 @@
                 if (!payload || payload.length === 0) return;
                 const message = JSON.parse(payload.toString());
                 if (message.protocol !== PROTOCOL_VERSION || message.playerId !== this.playerId || !message.sealed) return;
+                const { signature, ...body } = message;
+                const hostId = this.envelope?.room?.host;
+                if (message.signerPlayerId !== hostId || !await this._verifyValue(
+                    body, signature, this.envelope?.room?.players?.[hostId]?.authPublicKey
+                )) return;
+                if (message.gameId !== (this.envelope?.room?.game?.gameId || null)) return;
                 const value = await this._openSealedValue(message.sealed);
                 for (const listener of [...this.privateListeners]) {
                     try {
@@ -978,18 +1161,43 @@
 
             if (topic === this._topic('presence')) {
                 const presence = JSON.parse(payload.toString());
-                const presenceTask = this.commandQueue.then(() => this._handlePresence(presence));
-                this.commandQueue = presenceTask.catch((error) => {
-                    console.warn('[MQTT] Presence handling failed', error);
-                });
-                await presenceTask;
+                await this._handlePresence(presence);
             }
+        }
+
+        async _validateEnvelope(envelope) {
+            if (envelope.protocol !== PROTOCOL_VERSION || !Number.isSafeInteger(envelope.version)) return false;
+            if (envelope.room && envelope.room.code !== this.roomCode) return false;
+            if (!envelope.stateSignature || !envelope.signerPlayerId) return false;
+            const previousRoom = this.envelope?.room;
+            const signerId = envelope.signerPlayerId;
+            const signerKey = previousRoom?.players?.[signerId]?.authPublicKey
+                || envelope.room?.players?.[signerId]?.authPublicKey;
+            if (!signerKey) return false;
+            const stateBody = {
+                protocol: envelope.protocol, version: envelope.version,
+                updatedAt: envelope.updatedAt, room: envelope.room, signerPlayerId: signerId
+            };
+            if (!await this._verifyValue(stateBody, envelope.stateSignature, signerKey)) return false;
+            if (!previousRoom && envelope.room && envelope.room.host !== signerId) return false;
+            if (previousRoom && signerId !== previousRoom.host) {
+                const expectedSuccessor = this._getNextHostId(previousRoom, previousRoom.host);
+                const validHandoff = envelope.room?.host === signerId
+                    && expectedSuccessor === signerId
+                    && envelope.room?.players?.[previousRoom.host]?.connected === false;
+                if (!validHandoff) return false;
+            }
+            return true;
         }
 
         _acceptEnvelope(envelope) {
             if (!envelope || envelope.protocol !== PROTOCOL_VERSION) return;
+            if (envelope.room && envelope.room.code !== this.roomCode) return;
             if (this.envelope && envelope.version < this.envelope.version) return;
+            if (this.envelope && envelope.version === this.envelope.version
+                && !valuesEqual(this.envelope.room, envelope.room)) return;
             this.envelope = cloneValue(envelope);
+            this._persistCheckpoint();
             this._notifyListeners();
         }
 
@@ -1035,19 +1243,14 @@
         }
 
         async _handleCommand(command) {
+            const generation = this.connectionGeneration;
             if (
                 !command
                 || command.protocol !== PROTOCOL_VERSION
                 || !['mutation', 'action'].includes(command.type)
                 || command.roomCode !== this.roomCode
-                || !command.replyTopic
+                || command.replyTopic !== this._topic(`responses/${command.senderTransportId}`)
             ) {
-                return;
-            }
-
-            const cachedResponse = this.processedRequests.get(command.requestId);
-            if (cachedResponse) {
-                await this._publishRaw(command.replyTopic, JSON.stringify(cachedResponse), { qos: 1, retain: false });
                 return;
             }
 
@@ -1060,6 +1263,27 @@
             }
             if (!verificationKey || !valuesEqual(verificationKey, command.senderPublicSigningKey)) return;
             if (!await this._verifyCommand(command, verificationKey)) return;
+            if (generation !== this.connectionGeneration || !this.connected) return;
+
+            const cachedResponse = this.processedRequests.get(command.requestId);
+            if (cachedResponse) {
+                if (cachedResponse.commandSignature !== command.signature) return;
+                await this._deliverResponse(command, cachedResponse);
+                return;
+            }
+
+            if (command.action === 'sync' && room.players?.[command.senderPlayerId] && !room.players[command.senderPlayerId].left) {
+                await this._setPeerOnline(command.senderPlayerId, command.senderTransportId);
+                const value = this.hostSecrets?.gameId === room.game?.gameId
+                    ? this.hostSecrets?.privateStates?.[command.senderPlayerId] : null;
+                const messages = value ? [{ playerId: command.senderPlayerId, value }] : [];
+                const inquiry = this.hostSecrets?.inquisitorResults?.[command.senderPlayerId];
+                if (inquiry && this.hostSecrets?.gameId === room.game?.gameId) {
+                    messages.push({ playerId: command.senderPlayerId, value: inquiry, retain: false });
+                }
+                await this._deliverResponse(command, { ok: true, privateMessages: messages });
+                return;
+            }
 
             let response;
             if ((this.envelope?.version || 0) !== command.baseVersion) {
@@ -1079,6 +1303,13 @@
 
                     if (command.type === 'action') {
                         if (!this.actionHandler) throw new Error('房主尚未加载游戏动作处理器');
+                        const game = currentRoom.game;
+                        const expected = game?.gameId ? {
+                            gameId: game.gameId, phase: game.phase,
+                            currentMission: game.currentMission, selectionRevision: game.selectionRevision || 0
+                        } : null;
+                        if (!valuesEqual(command.context || null, expected)) throw new Error('对局阶段已变化，请按当前界面重新操作');
+                        if (room.players?.[command.senderPlayerId]?.left) throw new Error('你已离开房间');
                         let actionPayload = cloneValue(command.payload || {});
                         if (actionPayload.sealed) actionPayload = await this._openSealedValue(actionPayload.sealed);
                         const actionResult = await this.actionHandler({
@@ -1087,6 +1318,7 @@
                             senderPlayerId: command.senderPlayerId,
                             room: cloneValue(currentRoom)
                         });
+                        if (generation !== this.connectionGeneration) return;
                         nextRoom = actionResult?.room;
                         privateMessages = actionResult?.privateMessages || [];
                         result = actionResult?.result || null;
@@ -1109,21 +1341,19 @@
                             room: nextRoom
                         };
 
-                    if (!valuesEqual(currentRoom, nextRoom)) {
-                        this._acceptEnvelope(nextEnvelope);
-                        await this._publishState(nextEnvelope);
-                    }
-                    for (const message of privateMessages) {
-                        await this.publishPrivate(message.playerId, message.value, { retain: message.retain !== false });
-                    }
                     response = {
                         protocol: PROTOCOL_VERSION,
                         requestId: command.requestId,
                         ok: true,
                         conflict: false,
-                        envelope: cloneValue(nextEnvelope),
-                        result
+                        result,
+                        privateMessages,
+                        commandSignature: command.signature
                     };
+                    // Record the result before any network I/O: an ACK loss must not run an action twice.
+                    this.processedRequests.set(command.requestId, response);
+                    this._trimReceipts();
+                    this._acceptEnvelope(nextEnvelope);
                 } catch (error) {
                     response = {
                         protocol: PROTOCOL_VERSION,
@@ -1136,12 +1366,47 @@
                 }
             }
 
+            delete response.envelope;
+            response.commandSignature = command.signature;
             this.processedRequests.set(command.requestId, response);
-            if (this.processedRequests.size > 100) {
+            this._trimReceipts();
+            this._persistCheckpoint();
+            await this._deliverResponse(command, response);
+        }
+
+        _trimReceipts() {
+            if (this.processedRequests.size > 256) {
                 const oldestKey = this.processedRequests.keys().next().value;
                 this.processedRequests.delete(oldestKey);
             }
-            await this._publishRaw(command.replyTopic, JSON.stringify(response), { qos: 1, retain: false });
+        }
+
+        async _deliverResponse(command, record) {
+            // Retry publication too, even when the action itself was already durably committed.
+            if (this.lastPublishedVersion !== this.envelope.version || command.action === 'sync') {
+                await this._publishState(this.envelope);
+            }
+            await Promise.all((record.privateMessages || []).map((message) => this.publishPrivate(
+                message.playerId, message.value, { retain: message.retain !== false }
+            )));
+            const body = {
+                protocol: PROTOCOL_VERSION, requestId: command.requestId,
+                ok: !!record.ok, conflict: !!record.conflict,
+                error: record.error || null, result: record.result || null,
+                envelope: cloneValue(this.envelope), signerPlayerId: this.playerId
+            };
+            const response = { ...body, signature: await this._signValue(body) };
+            if (command.senderPlayerId === this.playerId && command.senderTransportId === this.transportId) {
+                const pending = this.pendingRequests.get(command.requestId);
+                if (pending) {
+                    clearTimeout(pending.timeoutId);
+                    clearTimeout(pending.retryId);
+                    this.pendingRequests.delete(command.requestId);
+                    pending.resolve(response);
+                }
+            } else {
+                await this._publishRaw(command.replyTopic, JSON.stringify(response), { qos: 1, retain: false });
+            }
         }
 
         _getNextHostId(room, excludedPlayerId) {
@@ -1162,20 +1427,30 @@
         }
 
         async _handlePresence(presence) {
+            const generation = this.connectionGeneration;
             if (
                 !presence
                 || presence.protocol !== PROTOCOL_VERSION
                 || presence.roomCode !== this.roomCode
+                || !['online', 'heartbeat', 'offline'].includes(presence.type)
                 || !presence.playerId
-                || !this.envelope?.room?.players?.[presence.playerId]
             ) {
                 return;
             }
 
-            const room = this.envelope.room;
-            const currentPlayer = room.players[presence.playerId];
+            const room = this.envelope?.room;
+            const currentPlayer = room?.players?.[presence.playerId];
             const { signature, ...presenceBody } = presence;
-            if (!await this._verifyValue(presenceBody, signature, currentPlayer.authPublicKey)) return;
+            const key = presence.playerId === this.playerId ? this.publicSigningKey : currentPlayer?.authPublicKey;
+            if (!await this._verifyValue(presenceBody, signature, key)) return;
+            if (generation !== this.connectionGeneration || !this.connected) return;
+            if (presence.playerId === this.playerId && presence.transportId === this.transportId && presence.type !== 'offline') {
+                this.lastEchoAt = Date.now();
+                if (this.ready && !this.offlineTimers.has(room?.host)) {
+                    this._emitStatus('connected', `已连接 · 转发往返 ${Math.max(0, Date.now() - presence.at)} ms`);
+                }
+            }
+            if (!currentPlayer || currentPlayer.left) return;
             if (
                 presence.type === 'offline'
                 && currentPlayer.transportId
@@ -1184,30 +1459,90 @@
                 return;
             }
 
-            const isCurrentHost = room.host === this.playerId;
-            const nextHostId = presence.type === 'offline' && room.host === presence.playerId
-                ? this._getNextHostId(room, presence.playerId)
-                : null;
-            const isHostSuccessor = nextHostId === this.playerId;
-
-            if (!isCurrentHost && !isHostSuccessor) return;
-
-            const nextRoom = cloneValue(room);
-            const player = nextRoom.players[presence.playerId];
-            player.connected = presence.type !== 'offline';
-            if (presence.type === 'online') {
-                player.transportId = presence.transportId;
+            if (presence.type === 'offline') {
+                this._scheduleOffline(presence.playerId, presence.transportId);
+                return;
             }
-            player.disconnectedAt = presence.type === 'offline' ? Date.now() : null;
-            player.lastSeen = Date.now();
+            if (presence.type === 'heartbeat' && currentPlayer.transportId && presence.transportId !== currentPlayer.transportId) return;
+            const previous = this.peers.get(presence.playerId);
+            if (previous && presence.at < previous.at) return;
+            this.peers.set(presence.playerId, { at: presence.at, seenAt: Date.now(), transportId: presence.transportId });
+            const pending = this.offlineTimers.get(presence.playerId);
+            clearTimeout(pending?.timer);
+            this.offlineTimers.delete(presence.playerId);
+            if (room.host === this.playerId && (currentPlayer.connected === false || currentPlayer.transportId !== presence.transportId)) {
+                const task = this.commandQueue.then(() => this._setPeerOnline(presence.playerId, presence.transportId));
+                this.commandQueue = task.catch(() => undefined);
+                await task;
+            }
+            if (pending && presence.playerId === room.host && this.ready) {
+                this._emitStatus('connected', '房主已重连 · 正在补齐状态');
+                this._synchronize().catch(() => undefined);
+            }
+            if (room.host === this.playerId && presence.type === 'heartbeat'
+                && Number.isInteger(presence.version) && presence.version < this.envelope.version) {
+                await this._publishState(this.envelope);
+            }
+        }
 
+        async _setPeerOnline(playerId, transportId) {
+            const room = this.envelope?.room;
+            const player = room?.players?.[playerId];
+            if (!player || player.left || room.host !== this.playerId) return;
+            const pending = this.offlineTimers.get(playerId);
+            clearTimeout(pending?.timer);
+            this.offlineTimers.delete(playerId);
+            if (player.connected !== false && player.transportId === transportId) return;
+            const nextRoom = cloneValue(room);
+            Object.assign(nextRoom.players[playerId], { connected: true, disconnectedAt: null, transportId });
+            this._acceptEnvelope({ protocol: PROTOCOL_VERSION, version: this.envelope.version + 1, updatedAt: Date.now(), room: nextRoom });
+            await this._publishState(this.envelope);
+        }
+
+        _clearOfflineTimers() {
+            for (const pending of this.offlineTimers.values()) clearTimeout(pending.timer);
+            this.offlineTimers.clear();
+        }
+
+        _scheduleOffline(playerId, transportId) {
+            if (!this.connected || playerId === this.playerId || this.offlineTimers.has(playerId)) return;
+            const room = this.envelope?.room;
+            if (!room?.players?.[playerId] || room.players[playerId].left || room.players[playerId].connected === false) return;
+            const grace = room.host === playerId && room.state === 'playing' ? this.hostGraceMs : this.playerGraceMs;
+            const pending = { transportId, deadline: Date.now() + grace, timer: null };
+            pending.timer = setTimeout(() => {
+                if (this.offlineTimers.get(playerId) !== pending) return;
+                const task = this.commandQueue.then(() => this._finalizeOffline(playerId, pending));
+                this.commandQueue = task.catch((error) => {
+                    if (this.connected) console.warn('[MQTT] Offline recovery failed', error);
+                });
+            }, grace);
+            this.offlineTimers.set(playerId, pending);
+            if (room.host === playerId) this._emitStatus('waiting', `房主正在重连，保留对局 ${Math.ceil(grace / 1000)} 秒…`);
+        }
+
+        async _finalizeOffline(playerId, pending) {
+            if (this.offlineTimers.get(playerId) !== pending || !this.connected
+                || Date.now() - this.lastEchoAt > PEER_TIMEOUT_MS) return;
+            const room = this.envelope?.room;
+            if (!room?.players?.[playerId] || (room.players[playerId].transportId
+                && room.players[playerId].transportId !== pending.transportId)) return;
+            const isHostSuccessor = room.host === playerId && this._getNextHostId(room, playerId) === this.playerId;
+            if (room.host !== this.playerId && !isHostSuccessor) return;
+            this.offlineTimers.delete(playerId);
+            const nextRoom = cloneValue(room);
+            Object.assign(nextRoom.players[playerId], { connected: false, disconnectedAt: Date.now() });
             if (isHostSuccessor) {
                 nextRoom.host = this.playerId;
-                for (const [playerId, entry] of Object.entries(nextRoom.players || {})) {
-                    entry.isHost = playerId === this.playerId;
+                for (const [id, entry] of Object.entries(nextRoom.players || {})) {
+                    entry.isHost = id === this.playerId;
+                }
+                if (nextRoom.state === 'playing' && nextRoom.game?.phase !== 'ended') {
+                    nextRoom.game.phase = 'ended';
+                    nextRoom.game.winners = 'aborted';
+                    nextRoom.game.winReason = '房主重连等待超时，无法恢复私密对局状态；本局中止，可返回大厅重开';
                 }
             }
-
             const nextEnvelope = {
                 protocol: PROTOCOL_VERSION,
                 version: (this.envelope.version || 0) + 1,
@@ -1216,6 +1551,7 @@
             };
             this._acceptEnvelope(nextEnvelope);
             await this._publishState(nextEnvelope);
+            if (isHostSuccessor) this._emitStatus('connected', '已接任房主');
         }
 
         async _announcePresence(type) {
@@ -1225,15 +1561,17 @@
                 roomCode: this.roomCode,
                 playerId: this.playerId,
                 transportId: this.transportId,
+                version: this.envelope?.version || 0,
                 at: Date.now()
             };
             return this._publishRaw(this._topic('presence'), JSON.stringify({
                 ...body,
                 signature: await this._signValue(body)
-            }), { qos: 1, retain: false });
+            }), { qos: type === 'heartbeat' ? 0 : 1, retain: false });
         }
 
         async _publishState(envelope) {
+            const generation = this.connectionGeneration;
             const stateBody = {
                 protocol: envelope.protocol,
                 version: envelope.version,
@@ -1246,7 +1584,13 @@
                 signerPlayerId: this.playerId,
                 stateSignature: await this._signValue(stateBody)
             };
+            if (generation !== this.connectionGeneration) return;
+            if (this.envelope?.version === envelope.version && valuesEqual(this.envelope.room, envelope.room)) {
+                this.envelope = signedEnvelope;
+                this._persistCheckpoint();
+            }
             await this._publishRaw(this._topic('state'), JSON.stringify(signedEnvelope), { qos: 1, retain: true });
+            this.lastPublishedVersion = envelope.version;
         }
 
         _publishRaw(topic, payload, options) {
@@ -1255,7 +1599,9 @@
                     reject(new Error('未连接联机服务器'));
                     return;
                 }
+                const timer = setTimeout(() => reject(new Error('发送确认超时')), 8000);
                 this.client.publish(topic, payload, options, (error) => {
+                    clearTimeout(timer);
                     if (error) reject(error);
                     else resolve();
                 });

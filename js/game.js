@@ -12,6 +12,7 @@ const GameManager = {
     privateGameId: null,
     privateNeutralFailUsed: false,
     lastPrivateInquisitorResult: null,
+    selectionDraft: null,
 
     _getRoleAssignments(game = this.gameData) {
         const hostRoles = typeof database !== 'undefined' ? database.getHostSecrets?.()?.roles : null;
@@ -144,81 +145,97 @@ const GameManager = {
 
             game.actionType = actionType;
             game.phase = actionType === 'mission' ? 'selectTeam' : 'selectExile';
+            game.selectionRevision = (game.selectionRevision || 0) + 1;
             game.selectedTeam = [];
             game.exileTarget = null;
             return game;
         }, undefined, false);
     },
 
-    async selectTeamMember(playerId) {
-        if (!this.isCaptain()) return;
-        if (typeof database !== 'undefined' && database.sendAction) {
-            return database.sendAction('toggleTeamMember', { playerId });
+    syncSelectionDraft(game = this.gameData) {
+        if (!['selectTeam', 'selectExile'].includes(game?.phase) || !this.isCaptain(game)) {
+            this.selectionDraft = null;
+            return null;
         }
 
-        const currentTeam = [...(this.gameData?.selectedTeam || [])];
-        const maxSize = this.getCurrentMissionSize();
-        const exiledPlayers = this.gameData?.exiledPlayers || [];
-
-        if (exiledPlayers.includes(playerId)) return;
-
-        const index = currentTeam.indexOf(playerId);
-        if (index > -1) {
-            currentTeam.splice(index, 1);
-        } else if (currentTeam.length < maxSize) {
-            currentTeam.push(playerId);
+        // Keep tentative choices out of the shared snapshot and across unrelated broadcasts.
+        const key = JSON.stringify([
+            RoomManager.currentRoom, game.gameId, game.selectionRevision || 0,
+            game.phase, this.getCaptain(game).id, game.currentMission, game.rejectCount || 0
+        ]);
+        if (this.selectionDraft?.key !== key) {
+            this.selectionDraft = {
+                key,
+                team: [...new Set(game.selectedTeam || [])],
+                targetId: game.exileTarget || null,
+                submitting: false
+            };
         }
 
-        await RoomManager.roomRef.child('game/selectedTeam').set(currentTeam);
+        const activeIds = this.getActivePlayerIds(game);
+        const draft = this.selectionDraft;
+        draft.team = draft.team.filter((id) => activeIds.includes(id)).slice(0, this.getCurrentMissionSize(game));
+        if (!activeIds.includes(draft.targetId) || draft.targetId === this.getCaptain(game).id) {
+            draft.targetId = null;
+        }
+        return draft;
     },
 
-    async selectExileTarget(playerId) {
-        if (!this.isCaptain()) return;
-        if (typeof database !== 'undefined' && database.sendAction) {
-            return database.sendAction('selectExileTarget', { playerId });
+    getSelectionView(game = this.gameData) {
+        const draft = this.syncSelectionDraft(game);
+        return draft ? { ...game, selectedTeam: [...draft.team], exileTarget: draft.targetId } : game;
+    },
+
+    selectTeamMember(playerId) {
+        const draft = this.syncSelectionDraft();
+        if (!draft || draft.submitting || this.gameData.phase !== 'selectTeam') return;
+        if (!this.getActivePlayerIds().includes(playerId)) return;
+
+        const index = draft.team.indexOf(playerId);
+        if (index >= 0) draft.team.splice(index, 1);
+        else if (draft.team.length < this.getCurrentMissionSize()) draft.team.push(playerId);
+        window.onSelectionDraftChange?.();
+    },
+
+    selectExileTarget(playerId) {
+        const draft = this.syncSelectionDraft();
+        if (!draft || draft.submitting || this.gameData.phase !== 'selectExile') return;
+        if (!this.getActivePlayerIds().includes(playerId) || playerId === this.getCaptain().id) return;
+
+        draft.targetId = playerId;
+        window.onSelectionDraftChange?.();
+    },
+
+    async _confirmSelection(phase, action) {
+        const draft = this.syncSelectionDraft();
+        if (!draft || draft.submitting || this.gameData.phase !== phase) return;
+        if (phase === 'selectTeam' && draft.team.length !== this.getCurrentMissionSize()) return;
+        if (phase === 'selectExile' && !draft.targetId) return;
+
+        const payload = {
+            gameId: this.gameData.gameId,
+            selectionRevision: this.gameData.selectionRevision || 0,
+            ...(phase === 'selectTeam' ? { selectedTeam: [...draft.team] } : { targetPlayerId: draft.targetId })
+        };
+        draft.submitting = true;
+        window.onSelectionDraftChange?.();
+        try {
+            // The authority validates and publishes the entire proposal in one state change.
+            return await database.sendAction(action, payload);
+        } finally {
+            if (this.selectionDraft === draft) {
+                draft.submitting = false;
+                window.onSelectionDraftChange?.();
+            }
         }
-
-        const captainId = this.getCaptain().id;
-        const exiledPlayers = this.gameData?.exiledPlayers || [];
-        if (playerId === captainId || exiledPlayers.includes(playerId)) return;
-
-        await RoomManager.roomRef.child('game/exileTarget').set(playerId);
     },
 
     confirmTeamForVote() {
-        if (!this.isCaptain()) return;
-        if (typeof database !== 'undefined' && database.sendAction) {
-            return database.sendAction('confirmTeam', {});
-        }
-
-        return RoomManager.roomRef.child('game').transaction((game) => {
-            if (!game || game.phase !== 'selectTeam') return game;
-            if (game.playerOrder?.[game.captainIndex || 0] !== RoomManager.playerId) return game;
-            if ((game.selectedTeam || []).length !== this.getCurrentMissionSize(game)) return;
-
-            game.phase = 'vote';
-            game.votes = {};
-            game.voteType = 'mission';
-            return game;
-        }, undefined, false);
+        return this._confirmSelection('selectTeam', 'confirmTeam');
     },
 
     confirmExileForVote() {
-        if (!this.isCaptain()) return;
-        if (typeof database !== 'undefined' && database.sendAction) {
-            return database.sendAction('confirmExile', {});
-        }
-
-        return RoomManager.roomRef.child('game').transaction((game) => {
-            if (!game || game.phase !== 'selectExile') return game;
-            if (game.playerOrder?.[game.captainIndex || 0] !== RoomManager.playerId) return game;
-            if (!game.exileTarget) return;
-
-            game.phase = 'vote';
-            game.votes = {};
-            game.voteType = 'exile';
-            return game;
-        }, undefined, false);
+        return this._confirmSelection('selectExile', 'confirmExile');
     },
 
     castVote(approve) {
@@ -591,13 +608,24 @@ const GameManager = {
                 }
             }
 
-            if (nextGame.phase === 'mission' && (nextGame.selectedTeam || []).some((playerId) => !activePlayerIds.includes(playerId))) {
+            if (nextGame.phase === 'mission' && (nextGame.selectedTeam || []).some((playerId) =>
+                !activePlayerIds.includes(playerId) && !nextGame.missionSubmitted?.[playerId]
+            )) {
                 for (const playerId of nextGame.selectedTeam || []) {
                     if (secrets.missionHistory?.[playerId]) delete secrets.missionHistory[playerId][nextGame.currentMission];
+                    if (roles[playerId] === 'scapegoat' && secrets.missionCards?.[playerId] === false) {
+                        delete secrets.neutralFailUsage?.[playerId];
+                        const state = secrets.privateStates?.[playerId];
+                        if (state) {
+                            state.neutralFailUsed = false;
+                            privateMessages.push({ playerId, value: { ...state } });
+                        }
+                    }
                 }
                 secrets.missionCards = {};
                 secrets.missionCardsMission = nextGame.currentMission;
                 nextGame.phase = 'selectTeam';
+                nextGame.selectionRevision = (nextGame.selectionRevision || 0) + 1;
                 nextGame.selectedTeam = [];
                 nextGame.missionSubmitted = {};
                 nextGame.votes = {};
@@ -622,33 +650,33 @@ const GameManager = {
             if (!['mission', 'tribunal'].includes(payload.actionType)) return { error: '无效的行动类型' };
             nextGame.actionType = payload.actionType;
             nextGame.phase = payload.actionType === 'mission' ? 'selectTeam' : 'selectExile';
+            nextGame.selectionRevision = (nextGame.selectionRevision || 0) + 1;
             nextGame.selectedTeam = [];
             nextGame.exileTarget = null;
-        } else if (action === 'toggleTeamMember') {
-            if (nextGame.phase !== 'selectTeam' || senderPlayerId !== captainId) return { error: '只有当前队长可以选择队员' };
-            const targetId = payload.playerId;
-            if (!activePlayerIds.includes(targetId)) return { error: '该玩家当前不能上任务' };
-            const teamSize = this.getCurrentMissionSize(nextGame);
-            nextGame.selectedTeam = [...(nextGame.selectedTeam || [])];
-            const targetIndex = nextGame.selectedTeam.indexOf(targetId);
-            if (targetIndex >= 0) nextGame.selectedTeam.splice(targetIndex, 1);
-            else if (nextGame.selectedTeam.length < teamSize) nextGame.selectedTeam.push(targetId);
-        } else if (action === 'selectExileTarget') {
-            if (nextGame.phase !== 'selectExile' || senderPlayerId !== captainId) return { error: '只有当前队长可以选择放逐目标' };
-            const targetId = payload.playerId;
-            if (!activePlayerIds.includes(targetId) || targetId === captainId) return { error: '该玩家当前不能被队长提议放逐' };
-            nextGame.exileTarget = targetId;
         } else if (action === 'confirmTeam') {
             if (nextGame.phase !== 'selectTeam' || senderPlayerId !== captainId) return { error: '当前不能确认任务队伍' };
-            if ((nextGame.selectedTeam || []).length !== this.getCurrentMissionSize(nextGame)) return { error: '任务队伍人数不正确' };
-            if (!(nextGame.selectedTeam || []).every((playerId) => activePlayerIds.includes(playerId))) return { error: '任务队伍包含离线或已放逐玩家' };
+            if (payload.gameId !== nextGame.gameId || payload.selectionRevision !== (nextGame.selectionRevision || 0)) {
+                return { error: '选人阶段已变化，请重新选择' };
+            }
+            const team = payload.selectedTeam;
+            if (!Array.isArray(team) || team.length !== this.getCurrentMissionSize(nextGame)) return { error: '任务队伍人数不正确' };
+            if (new Set(team).size !== team.length) return { error: '任务队伍不能包含重复玩家' };
+            if (!team.every((playerId) => activePlayerIds.includes(playerId))) return { error: '任务队伍包含离线或已放逐玩家' };
+            nextGame.selectedTeam = nextGame.playerOrder.filter((playerId) => team.includes(playerId));
             nextGame.phase = 'vote';
             nextGame.votes = {};
             nextGame.voteType = 'mission';
         } else if (action === 'confirmExile') {
-            if (nextGame.phase !== 'selectExile' || senderPlayerId !== captainId || !nextGame.exileTarget) {
+            if (nextGame.phase !== 'selectExile' || senderPlayerId !== captainId) {
                 return { error: '当前不能确认放逐目标' };
             }
+            if (payload.gameId !== nextGame.gameId || payload.selectionRevision !== (nextGame.selectionRevision || 0)) {
+                return { error: '选人阶段已变化，请重新选择' };
+            }
+            if (!activePlayerIds.includes(payload.targetPlayerId) || payload.targetPlayerId === captainId) {
+                return { error: '该玩家当前不能被队长提议放逐' };
+            }
+            nextGame.exileTarget = payload.targetPlayerId;
             nextGame.phase = 'vote';
             nextGame.votes = {};
             nextGame.voteType = 'exile';
@@ -791,6 +819,8 @@ const GameManager = {
                     vote: vote ? 'Success' : 'Fail'
                 }
             });
+            secrets.inquisitorResults = secrets.inquisitorResults || {};
+            secrets.inquisitorResults[senderPlayerId] = privateMessages[privateMessages.length - 1].value;
         } else {
             return { error: '未知游戏动作' };
         }

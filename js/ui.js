@@ -80,6 +80,7 @@ const UI = {
 
         nextView.classList.add('active');
         this.currentView = viewId;
+        this.updateRoomTools();
     },
 
     showToast(message, duration = 3000) {
@@ -95,16 +96,125 @@ const UI = {
         status.dataset.state = state || 'idle';
         const text = status.querySelector('.broker-status-text');
         if (text) text.textContent = message || '';
+        const banner = document.getElementById('connection-banner');
+        if (banner) {
+            banner.dataset.state = state || 'idle';
+            document.getElementById('connection-message').textContent = message || '';
+            document.getElementById('reconnect-btn').hidden = ['connected', 'idle'].includes(state);
+        }
+    },
+
+    updateRoomTools() {
+        const inRoom = this.currentView !== 'home' && !!RoomManager.currentRoom;
+        const banner = document.getElementById('connection-banner');
+        if (banner) banner.hidden = !inRoom;
+        const hasGame = inRoom && this.currentView !== 'lobby' && !!GameManager.gameData?.gameId;
+        const button = document.getElementById('player-notes-btn');
+        if (button) button.hidden = !hasGame;
+        const dialog = document.getElementById('player-notes-dialog');
+        if (!hasGame && dialog?.open) dialog.close();
+    },
+
+    openPlayerNotes(playerId = null) {
+        this.renderPlayerNotes();
+        const dialog = document.getElementById('player-notes-dialog');
+        if (!dialog.open) dialog.showModal();
+        if (playerId) {
+            const row = [...document.querySelectorAll('.notes-player')].find((item) => item.dataset.playerId === playerId);
+            row?.scrollIntoView({ block: 'nearest' });
+            row?.querySelector('select')?.focus();
+        }
+    },
+
+    renderPlayerNotes() {
+        const list = document.getElementById('player-notes-list');
+        if (!list || typeof PlayerNotes === 'undefined') return;
+        list.replaceChildren();
+        for (const playerId of this.getPlayerDisplayOrder(GameManager.players, GameManager.gameData)) {
+            const player = GameManager.players[playerId];
+            const row = document.createElement('div');
+            row.className = 'notes-player';
+            row.dataset.playerId = playerId;
+            const name = document.createElement('p');
+            name.className = 'notes-player-name';
+            const tags = [playerId === RoomManager.playerId ? '你' : '',
+                (GameManager.gameData?.exiledPlayers || []).includes(playerId) ? '已放逐' : '',
+                player.left ? '已离场' : player.connected === false ? '离线' : ''].filter(Boolean);
+            name.textContent = player.name + (tags.length ? `（${tags.join(' / ')}）` : '');
+            row.appendChild(name);
+            const fields = document.createElement('div');
+            fields.className = 'notes-fields';
+            const mark = PlayerNotes.get(playerId);
+            for (const [field, title, options] of [
+                ['judgment', '阵营判断', Object.entries(PlayerNotes.judgments)],
+                ['roleId', '猜测身份', Object.values(ROLES).map((role) => [role.id, role.name])]
+            ]) {
+                const label = document.createElement('label');
+                label.textContent = title;
+                const select = document.createElement('select');
+                select.setAttribute('aria-label', `${player.name}的${title}`);
+                for (const [value, text] of [['', '未标记'], ...options]) {
+                    const option = document.createElement('option');
+                    option.value = value;
+                    option.textContent = text;
+                    select.appendChild(option);
+                }
+                select.value = mark[field];
+                select.addEventListener('change', () => {
+                    PlayerNotes.set(playerId, { ...PlayerNotes.get(playerId), [field]: select.value });
+                    this.refreshNoteBadges();
+                });
+                label.appendChild(select);
+                fields.appendChild(label);
+            }
+            row.appendChild(fields);
+            list.appendChild(row);
+        }
+        this.refreshNoteBadges();
+    },
+
+    refreshNoteBadges() {
+        for (const button of document.querySelectorAll('.player-note-badge')) {
+            const label = PlayerNotes.label(button.dataset.playerId);
+            button.textContent = label || '＋ 标记';
+            button.dataset.judgment = PlayerNotes.get(button.dataset.playerId).judgment;
+        }
+        const hint = document.getElementById('player-notes-hint');
+        if (hint) hint.textContent = PlayerNotes.persistent
+            ? '仅自己可见，自动保存在此浏览器；新对局会清空。'
+            : '仅自己可见。浏览器未允许保存，当前标记刷新后会丢失。';
+    },
+
+    appendNoteButton(container, playerId) {
+        if (typeof PlayerNotes === 'undefined' || !PlayerNotes.scope) return;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'player-note-badge';
+        button.dataset.playerId = playerId;
+        button.dataset.judgment = PlayerNotes.get(playerId).judgment;
+        button.textContent = PlayerNotes.label(playerId) || '＋ 标记';
+        button.setAttribute('aria-label', `标记${GameManager.players[playerId]?.name || '玩家'}（仅自己可见）`);
+        button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            this.openPlayerNotes(playerId);
+        });
+        container.appendChild(button);
+    },
+
+    getPlayerDisplayOrder(players, gameData = null) {
+        // Room order is independent of role assignment and legacy shuffled turn orders.
+        return Object.keys(players || {})
+            .filter((id) => players[id] && (!gameData?.playerOrder || gameData.playerOrder.includes(id)))
+            .sort((a, b) => (players[a].joinedAt || 0) - (players[b].joinedAt || 0));
     },
 
     renderLobbyPlayers(players) {
         const list = document.getElementById('player-list');
         list.innerHTML = '';
 
-        const entries = Object.entries(players || {}).filter(([, player]) => player && !player.left);
+        const entries = this.getPlayerDisplayOrder(players)
+            .filter((id) => !players[id].left).map((id) => [id, players[id]]);
         const connectedCount = entries.filter(([, player]) => player.connected !== false).length;
-
-        entries.sort((a, b) => (a[1].joinedAt || 0) - (b[1].joinedAt || 0));
 
         for (const [playerId, player] of entries) {
             const li = document.createElement('li');
@@ -141,7 +251,7 @@ const UI = {
 
         container.innerHTML = '';
 
-        const playerOrder = (gameData?.playerOrder || Object.keys(players || {})).filter((playerId) => {
+        const playerOrder = this.getPlayerDisplayOrder(players, gameData).filter((playerId) => {
             const player = players[playerId];
             return player && !player.left && player.connected !== false;
         });
@@ -252,7 +362,7 @@ const UI = {
         const selectedTeam = gameData.selectedTeam || [];
         const exiledPlayers = gameData.exiledPlayers || [];
 
-        for (const playerId of gameData.playerOrder) {
+        for (const playerId of this.getPlayerDisplayOrder(players, gameData)) {
             const player = players[playerId];
             if (!player) continue;
 
@@ -278,6 +388,8 @@ const UI = {
                 div.addEventListener('click', () => onSelect?.(playerId));
             }
 
+            this.appendNoteButton(div, playerId);
+
             container.appendChild(div);
         }
     },
@@ -293,7 +405,7 @@ const UI = {
         const teamDiv = document.getElementById('vote-team');
         teamDiv.innerHTML = '';
 
-        for (const playerId of team) {
+        for (const playerId of this.getPlayerDisplayOrder(players, { playerOrder: team })) {
             const span = document.createElement('span');
             span.className = 'team-member';
             span.textContent = players[playerId]?.name || playerId;
@@ -372,7 +484,7 @@ const UI = {
             }
         }
 
-        for (const playerId of gameData.playerOrder || []) {
+        for (const playerId of this.getPlayerDisplayOrder(players, gameData)) {
             if (exiledPlayers.includes(playerId)) continue;
 
             const div = document.createElement('div');
@@ -408,7 +520,7 @@ const UI = {
         instruction.textContent = '好人完成了三次任务。请选择你认为是梅林的玩家进行刺杀。';
         waiting.style.display = 'none';
 
-        for (const playerId of gameData.playerOrder || []) {
+        for (const playerId of this.getPlayerDisplayOrder(players, gameData)) {
             if (playerId === RoomManager.playerId) continue;
 
             const div = document.createElement('div');
@@ -443,7 +555,7 @@ const UI = {
         description.textContent = gameData.winReason || '';
         rolesDiv.innerHTML = '';
 
-        for (const playerId of gameData.playerOrder || []) {
+        for (const playerId of this.getPlayerDisplayOrder(players, gameData)) {
             const role = GameManager.getRoleById(gameData.revealedRoles?.[playerId] || gameData.roles?.[playerId]);
             if (!role) continue;
 
@@ -495,7 +607,7 @@ const UI = {
             return;
         }
 
-        for (const playerId of eligibleTargets) {
+        for (const playerId of this.getPlayerDisplayOrder(players, { playerOrder: eligibleTargets })) {
             const button = document.createElement('button');
             button.className = 'btn btn-secondary';
             button.textContent = players[playerId]?.name || playerId;
@@ -532,7 +644,7 @@ const UI = {
         const captainId = gameData.playerOrder[gameData.captainIndex || 0];
         const exiledPlayers = gameData.exiledPlayers || [];
 
-        for (const playerId of gameData.playerOrder) {
+        for (const playerId of this.getPlayerDisplayOrder(players, gameData)) {
             const player = players[playerId];
             if (!player) continue;
 

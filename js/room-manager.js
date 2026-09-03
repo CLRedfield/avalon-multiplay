@@ -28,12 +28,12 @@ const RoomManager = {
     _saveSession() {
         if (!this.currentRoom || !this.playerId) return;
 
-        localStorage.setItem(this.sessionKey, JSON.stringify({
+        try { localStorage.setItem(this.sessionKey, JSON.stringify({
             roomCode: this.currentRoom,
             playerId: this.playerId,
             playerName: this.playerName || '',
             brokerUrl: database.brokerUrl || MQTTBrokerConfig.getSelectedBroker()
-        }));
+        })); } catch (error) { console.warn('[RoomManager] Session could not be saved', error); }
     },
 
     _loadSession() {
@@ -47,7 +47,7 @@ const RoomManager = {
     },
 
     _clearSession() {
-        localStorage.removeItem(this.sessionKey);
+        try { localStorage.removeItem(this.sessionKey); } catch (error) { /* Memory-only session. */ }
     },
 
     _getPlayerRef(playerId = this.playerId) {
@@ -58,6 +58,8 @@ const RoomManager = {
     async _setupPresence(playerId = this.playerId) {
         const playerRef = this._getPlayerRef(playerId);
         if (!playerRef) return;
+        const player = database.envelope?.room?.players?.[playerId];
+        if (player?.connected === true && player.transportId === database.transportId && !player.left) return;
 
         await playerRef.update({
             connected: true,
@@ -378,7 +380,7 @@ const RoomManager = {
     },
 
     async startGame() {
-        if (!this.roomRef || !this.isHost) return;
+        if (!this.roomRef || !this.isHost || this.gameStartPending) return;
 
         let preparedSecrets = null;
         let preparedPrivateRoles = [];
@@ -389,7 +391,9 @@ const RoomManager = {
                 if (!room || room.state !== 'waiting') return;
 
                 const allPlayers = room.players || {};
-                const activeEntries = Object.entries(allPlayers).filter(([, player]) => player && !player.left && player.connected !== false);
+                const activeEntries = Object.entries(allPlayers)
+                    .filter(([, player]) => player && !player.left && player.connected !== false)
+                    .sort((a, b) => (a[1].joinedAt || 0) - (b[1].joinedAt || 0));
 
                 if (activeEntries.length < 5 || activeEntries.length > 10) {
                     return;
@@ -443,8 +447,9 @@ const RoomManager = {
                 room.game = {
                     gameId,
                     phase: 'night',
-                    playerOrder: this._shuffleList(playerIds),
-                    captainIndex: 0,
+                    playerOrder: playerIds,
+                    captainIndex: Math.floor(Math.random() * playerIds.length),
+                    selectionRevision: 0,
                     currentMission: 0,
                     rejectCount: 0,
                     selectedTeam: [],
@@ -463,6 +468,8 @@ const RoomManager = {
                 };
 
                 room.state = 'playing';
+                // Persist secrets before the authority commits the new public game snapshot.
+                database.setHostSecrets(preparedSecrets);
                 return room;
             }, undefined, false);
 
@@ -472,9 +479,7 @@ const RoomManager = {
 
             database.setHostSecrets(preparedSecrets);
             this.gameStartPending = false;
-            for (const privateRole of preparedPrivateRoles) {
-                await database.publishPrivate(privateRole.playerId, privateRole.value);
-            }
+            await Promise.all(preparedPrivateRoles.map((privateRole) => database.publishPrivate(privateRole.playerId, privateRole.value)));
         } finally {
             this.gameStartPending = false;
         }
@@ -627,7 +632,9 @@ const RoomManager = {
         this.isLeaving = false;
         this.gameStartPending = false;
 
-        if (database.connected) {
+        if (typeof GameManager !== 'undefined') GameManager.selectionDraft = null;
+
+        if (database.client || database.connected) {
             database.disconnectRoom().catch((error) => {
                 console.warn('[RoomManager] MQTT disconnect failed', error);
             });
