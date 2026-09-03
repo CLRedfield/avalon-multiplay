@@ -2,14 +2,65 @@ const App = {
     phaseTimers: {
         voteResult: null,
         missionResult: null,
-        ended: null
+        assassinReconnect: null
     },
+    roomActionPending: false,
+    sessionRestorePending: true,
+    orphanedGameAbortPending: false,
 
     init() {
+        this.setupBrokerSelector();
         this.bindEvents();
         UI.renderRuleSummaries();
         UI.showView('home');
-        this.restoreSession();
+        this.setHomeActionsBusy(true);
+        this.restoreSession().finally(() => {
+            this.sessionRestorePending = false;
+            this.setHomeActionsBusy(false);
+        });
+    },
+
+    setHomeActionsBusy(isBusy) {
+        const createButton = document.getElementById('create-room-btn');
+        const joinButton = document.getElementById('join-room-btn');
+        const brokerSelect = document.getElementById('broker-select');
+        if (createButton) createButton.disabled = isBusy;
+        if (joinButton) joinButton.disabled = isBusy;
+        if (brokerSelect) brokerSelect.disabled = isBusy;
+    },
+
+    async runGameAction(action, failureLabel = '操作失败') {
+        try {
+            return await action();
+        } catch (error) {
+            console.warn('[App] Game action failed', error);
+            UI.showToast(`${failureLabel}: ${error.message || error}`);
+            return null;
+        }
+    },
+
+    setupBrokerSelector() {
+        const select = document.getElementById('broker-select');
+        if (!select) return;
+
+        select.innerHTML = '';
+        MQTTBrokerConfig.alternatives.forEach((brokerUrl) => {
+            const option = document.createElement('option');
+            option.value = brokerUrl;
+            option.textContent = MQTTBrokerConfig.getBrokerLabel(brokerUrl);
+            select.appendChild(option);
+        });
+        select.value = MQTTBrokerConfig.getSelectedBroker();
+
+        select.addEventListener('change', () => {
+            const selected = MQTTBrokerConfig.setSelectedBroker(select.value);
+            UI.updateBrokerStatus('idle', `已选择 ${MQTTBrokerConfig.getBrokerLabel(selected)}`);
+        });
+
+        window.addEventListener('avalon-broker-status', (event) => {
+            const detail = event.detail || {};
+            UI.updateBrokerStatus(detail.state, detail.message);
+        });
     },
 
     bindEvents() {
@@ -43,6 +94,12 @@ const App = {
         document.getElementById('mission-fail').addEventListener('click', () => this.submitMissionCard(false));
         document.getElementById('inquisitor-btn').addEventListener('click', () => this.showInquisitorModal());
         document.getElementById('inquisitor-cancel').addEventListener('click', () => this.hideInquisitorModal());
+        document.getElementById('return-lobby-btn').addEventListener('click', () => this.backToLobby());
+        window.addEventListener('avalon-inquisitor-result', (event) => {
+            const result = event.detail;
+            if (!result) return;
+            UI.showToast(`${result.player} 在任务 ${result.mission} 提交了: ${result.vote}`, 6000);
+        });
     },
 
     async restoreSession() {
@@ -55,6 +112,8 @@ const App = {
 
             if (restored.state === 'waiting') {
                 UI.showView('lobby');
+                UI.renderLobbyPlayers(RoomManager.latestPlayers);
+                this.updateLobbyPanels();
             }
 
             UI.showToast('已恢复房间连接');
@@ -111,7 +170,12 @@ const App = {
             const phaseSnapshot = await RoomManager.roomRef.child('game/phase').once('value');
             if (phaseSnapshot.val() !== 'voteResult') return;
 
-            await GameManager._proceedAfterVoteResult();
+            try {
+                await GameManager._proceedAfterVoteResult();
+            } catch (error) {
+                console.warn('[App] Vote-result advance failed; retrying', error);
+                this.scheduleVoteResultAdvance();
+            }
         }, 5000);
     },
 
@@ -124,25 +188,12 @@ const App = {
             const phaseSnapshot = await RoomManager.roomRef.child('game/phase').once('value');
             if (phaseSnapshot.val() !== 'missionResult') return;
 
-            await GameManager._proceedAfterMissionResult();
-        }, 5000);
-    },
-
-    scheduleReturnToLobby() {
-        if (!RoomManager.isHost || this.phaseTimers.ended) return;
-
-        this.phaseTimers.ended = setTimeout(async () => {
-            this.phaseTimers.ended = null;
-
-            const phaseSnapshot = await RoomManager.roomRef.child('game/phase').once('value');
-            if (phaseSnapshot.val() !== 'ended') return;
-
-            if (RoomManager.isHost) {
-                await RoomManager.resetToLobby();
+            try {
+                await GameManager._proceedAfterMissionResult();
+            } catch (error) {
+                console.warn('[App] Mission-result advance failed; retrying', error);
+                this.scheduleMissionResultAdvance();
             }
-
-            UI.showView('lobby');
-            document.getElementById('role-info-panel').style.display = 'none';
         }, 5000);
     },
 
@@ -157,30 +208,73 @@ const App = {
                 this.scheduleMissionResultAdvance();
                 break;
             case 'ended':
-                this.scheduleReturnToLobby();
                 break;
         }
     },
 
+    updateResultControls() {
+        document.getElementById('return-lobby-btn').style.display = RoomManager.isHost ? 'block' : 'none';
+        document.getElementById('result-host-waiting').style.display = RoomManager.isHost ? 'none' : 'block';
+    },
+
+    abortOrphanedGameIfNeeded(game = GameManager.gameData) {
+        if (
+            this.orphanedGameAbortPending
+            || !RoomManager.isHost
+            || RoomManager.gameStartPending
+            || RoomManager.roomState !== 'playing'
+            || !game
+            || game.phase === 'ended'
+            || database.getHostSecrets?.()?.gameId === game.gameId
+        ) {
+            return;
+        }
+
+        this.orphanedGameAbortPending = true;
+        RoomManager.roomRef.child('game').transaction((currentGame) => {
+            if (!currentGame || currentGame.phase === 'ended') return;
+            currentGame.phase = 'ended';
+            currentGame.winners = 'aborted';
+            currentGame.winReason = '原房主离线；为避免秘密身份泄露，本局已安全中止';
+            return currentGame;
+        }, undefined, false).catch((error) => {
+            console.warn('[App] Failed to abort orphaned game', error);
+        }).finally(() => {
+            this.orphanedGameAbortPending = false;
+        });
+    },
+
     async createRoom() {
+        if (this.roomActionPending || this.sessionRestorePending) return;
+
         const name = document.getElementById('player-name').value.trim();
         if (!name) {
             UI.showToast('请输入昵称');
             return;
         }
 
+        this.roomActionPending = true;
+        this.setHomeActionsBusy(true);
+
         try {
             const code = await RoomManager.createRoom(name);
             document.getElementById('display-room-code').textContent = code;
-            this.updateLobbyPanels();
             UI.showView('lobby');
+            UI.renderLobbyPlayers(RoomManager.latestPlayers);
+            this.updateLobbyPanels();
             UI.showToast('房间创建成功: ' + code);
         } catch (error) {
+            RoomManager._cleanup(true);
             UI.showToast('创建失败: ' + error.message);
+        } finally {
+            this.roomActionPending = false;
+            this.setHomeActionsBusy(false);
         }
     },
 
     async joinRoom() {
+        if (this.roomActionPending || this.sessionRestorePending) return;
+
         const name = document.getElementById('player-name').value.trim();
         const code = document.getElementById('room-code').value.trim().toUpperCase();
 
@@ -194,14 +288,22 @@ const App = {
             return;
         }
 
+        this.roomActionPending = true;
+        this.setHomeActionsBusy(true);
+
         try {
             await RoomManager.joinRoom(code, name);
             document.getElementById('display-room-code').textContent = code;
-            this.updateLobbyPanels();
             UI.showView('lobby');
+            UI.renderLobbyPlayers(RoomManager.latestPlayers);
+            this.updateLobbyPanels();
             UI.showToast('已加入房间');
         } catch (error) {
+            RoomManager._cleanup(true);
             UI.showToast('加入失败: ' + error.message);
+        } finally {
+            this.roomActionPending = false;
+            this.setHomeActionsBusy(false);
         }
     },
 
@@ -224,10 +326,12 @@ const App = {
     },
 
     async leaveRoom() {
+        if (this.roomActionPending) return;
         if (!confirm('确定要离开当前房间吗？')) {
             return;
         }
 
+        this.roomActionPending = true;
         try {
             await RoomManager.leaveRoom();
             this.clearPhaseTimers();
@@ -235,6 +339,8 @@ const App = {
             UI.showToast('已离开房间');
         } catch (error) {
             UI.showToast('离开失败: ' + error.message);
+        } finally {
+            this.roomActionPending = false;
         }
     },
 
@@ -271,11 +377,11 @@ const App = {
     },
 
     castVote(approve) {
-        return GameManager.castVote(approve);
+        return this.runGameAction(() => GameManager.castVote(approve), '投票失败');
     },
 
     submitMissionCard(success) {
-        return GameManager.submitMissionCard(success);
+        return this.runGameAction(() => GameManager.submitMissionCard(success), '提交任务牌失败');
     },
 
     voteInitiateTribunal(agree) {
@@ -291,7 +397,7 @@ const App = {
             return;
         }
 
-        await GameManager.assassinate(targetId);
+        await this.runGameAction(() => GameManager.assassinate(targetId), '刺杀失败');
     },
 
     showInquisitorModal() {
@@ -323,10 +429,13 @@ const App = {
     },
 
     async useInquisitorSkill(targetId) {
-        const result = await GameManager.useInquisitorSkill(targetId);
+        const result = await this.runGameAction(
+            () => GameManager.useInquisitorSkill(targetId),
+            '使用审判官技能失败'
+        );
         this.hideInquisitorModal();
 
-        if (!result) return;
+        if (!result || result.delivered) return;
 
         if (result.noData) {
             UI.showToast('第一轮没有可查看的任务记录');
@@ -373,23 +482,23 @@ const App = {
     },
 
     selectTeamMember(playerId) {
-        return GameManager.selectTeamMember(playerId);
+        return this.runGameAction(() => GameManager.selectTeamMember(playerId));
     },
 
     chooseAction(actionType) {
-        return GameManager.chooseActionType(actionType);
+        return this.runGameAction(() => GameManager.chooseActionType(actionType));
     },
 
     confirmTeamForVote() {
-        return GameManager.confirmTeamForVote();
+        return this.runGameAction(() => GameManager.confirmTeamForVote());
     },
 
     selectExileTarget(playerId) {
-        return GameManager.selectExileTarget(playerId);
+        return this.runGameAction(() => GameManager.selectExileTarget(playerId));
     },
 
     confirmExileForVote() {
-        return GameManager.confirmExileForVote();
+        return this.runGameAction(() => GameManager.confirmExileForVote());
     }
 };
 
@@ -397,7 +506,12 @@ window.onPlayersChange = (players) => {
     GameManager.players = players;
     App.updateLobbyPanels();
 
-    if (RoomManager.playerId && RoomManager.currentRoom && !players[RoomManager.playerId]) {
+    if (
+        !RoomManager.isLeaving
+        && RoomManager.playerId
+        && RoomManager.currentRoom
+        && !players[RoomManager.playerId]
+    ) {
         RoomManager._cleanup(true);
         App.clearPhaseTimers();
         UI.showView('home');
@@ -420,11 +534,19 @@ window.onPlayersChange = (players) => {
             }, undefined, false);
         }
     }
+
+    if (RoomManager.isHost && RoomManager.roomState === 'playing' && GameManager.gameData) {
+        database.sendAction('reconcilePresence', {}).catch((error) => {
+            console.warn('[App] Presence reconciliation skipped', error);
+        });
+    }
 };
 
 window.onHostChange = () => {
     App.updateLobbyPanels();
+    if (GameManager.gameData?.phase === 'ended') App.updateResultControls();
     App.resumeHostControlledPhase();
+    App.abortOrphanedGameIfNeeded();
 };
 
 window.onRoomStateChange = (state) => {
@@ -434,8 +556,11 @@ window.onRoomStateChange = (state) => {
         UI.showView('role');
     }
 
-    if (state === 'waiting' && RoomManager.currentRoom && UI.currentView === 'home') {
+    if (state === 'waiting' && RoomManager.currentRoom && UI.currentView !== 'lobby') {
         UI.showView('lobby');
+        UI.renderLobbyPlayers(RoomManager.latestPlayers);
+        App.updateLobbyPanels();
+        document.getElementById('role-info-panel').style.display = 'none';
     }
 };
 
@@ -454,7 +579,9 @@ window.onGameChange = (game) => {
         return;
     }
 
-    if (game.roles && !game.roles[RoomManager.playerId]) {
+    App.abortOrphanedGameIfNeeded(game);
+
+    if (game.playerOrder && !game.playerOrder.includes(RoomManager.playerId)) {
         UI.showToast('你没有加入当前对局');
         return;
     }
@@ -467,18 +594,14 @@ window.onGameChange = (game) => {
     App.clearPhaseTimers(
         game.phase === 'voteResult' ? ['voteResult']
             : game.phase === 'missionResult' ? ['missionResult']
-            : game.phase === 'ended' ? ['ended']
             : []
     );
 
     switch (game.phase) {
         case 'night': {
             const myRole = GameManager.getMyRole(game);
-            const roleAssignments = Object.fromEntries(
-                Object.entries(game.roles || {}).map(([playerId, roleId]) => [playerId, GameManager.getRoleById(roleId)])
-            );
-
-            UI.renderRoleCard(myRole, getNightInfo(myRole, roleAssignments, RoomManager.playerId), playerNames);
+            UI.renderRoleCard(myRole, GameManager.privateNightInfo, playerNames);
+            if (!myRole) document.getElementById('role-name').textContent = '正在安全接收身份...';
             UI.showView('role');
             UI.renderRoleReadyStatus(GameManager.players, game);
             App.showRolePanel(myRole);
@@ -574,7 +697,7 @@ window.onGameChange = (game) => {
 
             if (isCaptain) {
                 UI.renderActionPanel(`
-                    <p style="text-align: center; margin-bottom: 12px;">放逐目标: ${targetName}</p>
+                    <p style="text-align: center; margin-bottom: 12px;">放逐目标: ${UI.escapeHTML(targetName)}</p>
                     <button class="btn btn-danger" onclick="App.confirmExileForVote()" ${hasTarget ? '' : 'disabled'}>
                         <span>确认放逐并投票</span>
                     </button>
@@ -660,7 +783,7 @@ window.onGameChange = (game) => {
             const myRole = GameManager.getMyRole(game);
             const canFail = GameManager.canRoleSubmitFail(myRole, RoomManager.playerId, game);
 
-            if (game.missionCards?.[RoomManager.playerId] !== undefined) {
+            if (game.missionSubmitted?.[RoomManager.playerId]) {
                 document.getElementById('mission-instruction').textContent = '等待其他队员完成任务...';
                 document.getElementById('mission-success').style.display = 'none';
                 document.getElementById('mission-fail').style.display = 'none';
@@ -711,27 +834,19 @@ window.onGameChange = (game) => {
         case 'assassin': {
             UI.showView('assassin');
             UI.renderAssassinView(GameManager.players, game, GameManager.getMyRole(game)?.id === 'assassin');
+            if (RoomManager.isHost && game.assassinReconnectDeadline && !App.phaseTimers.assassinReconnect) {
+                App.phaseTimers.assassinReconnect = setTimeout(() => {
+                    App.phaseTimers.assassinReconnect = null;
+                    database.sendAction('reconcilePresence', {}).catch(() => undefined);
+                }, Math.max(0, game.assassinReconnectDeadline - Date.now()));
+            }
             break;
         }
 
         case 'ended': {
             UI.showView('result');
             UI.renderResult(game, GameManager.players);
-
-            let countdown = 5;
-            const countdownEl = document.getElementById('result-countdown-num');
-            countdownEl.textContent = countdown;
-
-            const countdownInterval = setInterval(() => {
-                countdown--;
-                if (countdown >= 0) {
-                    countdownEl.textContent = countdown;
-                } else {
-                    clearInterval(countdownInterval);
-                }
-            }, 1000);
-
-            App.scheduleReturnToLobby();
+            App.updateResultControls();
             break;
         }
     }

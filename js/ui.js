@@ -1,6 +1,15 @@
 const UI = {
     currentView: 'home',
 
+    escapeHTML(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    },
+
     getRoleDescription(role) {
         if (!role) return '';
         if (role.id === 'inquisitor') {
@@ -33,10 +42,10 @@ const UI = {
         if (!container) return;
 
         const neutralMissionRule = GAME_RULES.neutralCanFailMissions
-            ? '中立角色上车时可以提交失败牌；其中替罪羊整局只能提交 1 次失败牌。'
+            ? '中立角色上车时可以提交失败牌；替罪羊整局限 1 次，军火商和狂热者不限次数。'
             : '中立角色上车时只能提交成功牌。';
         const exileTieRule = GAME_RULES.exileTieBehavior === 'noExile'
-            ? '放逐投票若最高票平票，本轮无人被放逐，直接进入下一轮。'
+            ? '队长选择放逐后，无论投票通过与否，任务轮次都不变并轮换下一位队长；平票视为未通过。'
             : '放逐投票若最高票平票，将按系统预设规则继续结算。';
         const exileLimitRule = Number.isInteger(GAME_RULES.maxExilesPerGame)
             ? `每局最多可发起 ${GAME_RULES.maxExilesPerGame} 次放逐。`
@@ -46,9 +55,11 @@ const UI = {
             <div class="glass card rules-card">
                 <h3 class="rules-title">规则说明</h3>
                 <ul class="rules-list">
+                    <li>7 人及以上时，第 4 轮任务需要至少 2 张失败牌才会失败。</li>
                     <li>${neutralMissionRule}</li>
                     <li>${exileTieRule}</li>
                     <li>${exileLimitRule}</li>
+                    <li>9 人局为 6 好人、2 坏人、1 中立；10 人局勾选中立池后必定抽取 1 名中立角色。</li>
                 </ul>
             </div>
         `;
@@ -76,6 +87,14 @@ const UI = {
         toast.textContent = message;
         toast.classList.add('show');
         setTimeout(() => toast.classList.remove('show'), duration);
+    },
+
+    updateBrokerStatus(state, message) {
+        const status = document.getElementById('broker-status');
+        if (!status) return;
+        status.dataset.state = state || 'idle';
+        const text = status.querySelector('.broker-status-text');
+        if (text) text.textContent = message || '';
     },
 
     renderLobbyPlayers(players) {
@@ -122,7 +141,10 @@ const UI = {
 
         container.innerHTML = '';
 
-        const playerOrder = gameData?.playerOrder || Object.keys(players || {});
+        const playerOrder = (gameData?.playerOrder || Object.keys(players || {})).filter((playerId) => {
+            const player = players[playerId];
+            return player && !player.left && player.connected !== false;
+        });
         let readyCount = 0;
 
         for (const playerId of playerOrder) {
@@ -136,7 +158,7 @@ const UI = {
             div.className = 'ready-player' + (isReady ? ' ready' : '');
             div.innerHTML = `
                 <span class="ready-icon">${isReady ? '✓' : '○'}</span>
-                <span class="ready-name">${player.name}</span>
+                <span class="ready-name">${this.escapeHTML(player.name)}</span>
             `;
             container.appendChild(div);
         }
@@ -178,7 +200,9 @@ const UI = {
 
             if (nightInfo?.length) {
                 info.innerHTML = nightInfo.map((item) => {
-                    const names = item.players.map((playerId) => playerNames[playerId] || playerId).join(', ');
+                    const names = item.players
+                        .map((playerId) => this.escapeHTML(playerNames[playerId] || playerId))
+                        .join(', ');
                     return `<div><strong>${item.label}:</strong> ${names}</div>`;
                 }).join('');
             }
@@ -235,21 +259,22 @@ const UI = {
             const tag = [];
             if (playerId === captainId) tag.push('队长');
             if (playerId === RoomManager.playerId) tag.push('你');
-            if (player.connected === false) tag.push('离线');
+            if (player.left) tag.push('已离场');
+            else if (player.connected === false) tag.push('离线');
 
             const div = document.createElement('div');
             div.className = 'game-player';
             if (playerId === captainId) div.classList.add('captain');
             if (selectedTeam.includes(playerId)) div.classList.add('on-team');
             if (exiledPlayers.includes(playerId)) div.classList.add('exiled');
-            if (player.connected === false) div.classList.add('offline');
+            if (player.left || player.connected === false) div.classList.add('offline');
 
             div.innerHTML = `
-                <div class="player-name">${player.name}</div>
+                <div class="player-name">${this.escapeHTML(player.name)}</div>
                 <div class="player-tag">${tag.join(' / ')}</div>
             `;
 
-            if (selectable && !exiledPlayers.includes(playerId)) {
+            if (selectable && !exiledPlayers.includes(playerId) && !player.left && player.connected !== false) {
                 div.addEventListener('click', () => onSelect?.(playerId));
             }
 
@@ -355,7 +380,7 @@ const UI = {
             if (myVote === playerId) div.classList.add('voted');
 
             div.innerHTML = `
-                <div class="player-name">${players[playerId]?.name || playerId}</div>
+                <div class="player-name">${this.escapeHTML(players[playerId]?.name || playerId)}</div>
                 ${voteCount[playerId] ? `<div class="vote-count">${voteCount[playerId]} 票</div>` : ''}
             `;
 
@@ -384,13 +409,12 @@ const UI = {
         waiting.style.display = 'none';
 
         for (const playerId of gameData.playerOrder || []) {
-            const role = GameManager.getRoleById(gameData.roles?.[playerId]);
-            if (!role || role.team === 'evil') continue;
-            if ((gameData.exiledPlayers || []).includes(playerId)) continue;
+            if (playerId === RoomManager.playerId) continue;
 
             const div = document.createElement('div');
             div.className = 'assassin-target';
-            div.innerHTML = `<div class="player-name">${players[playerId]?.name || playerId}</div>`;
+            const exileLabel = (gameData.exiledPlayers || []).includes(playerId) ? '（已放逐）' : '';
+            div.innerHTML = `<div class="player-name">${this.escapeHTML(players[playerId]?.name || playerId)}${exileLabel}</div>`;
             div.addEventListener('click', () => App.assassinate(playerId));
             targets.appendChild(div);
         }
@@ -409,6 +433,8 @@ const UI = {
             title.textContent = '好人阵营获胜';
         } else if (gameData.winners === 'neutral') {
             title.textContent = '中立角色获胜';
+        } else if (gameData.winners === 'aborted') {
+            title.textContent = '对局已安全中止';
         } else {
             card.classList.add('evil-win');
             title.textContent = '坏人阵营获胜';
@@ -418,13 +444,13 @@ const UI = {
         rolesDiv.innerHTML = '';
 
         for (const playerId of gameData.playerOrder || []) {
-            const role = GameManager.getRoleById(gameData.roles?.[playerId]);
+            const role = GameManager.getRoleById(gameData.revealedRoles?.[playerId] || gameData.roles?.[playerId]);
             if (!role) continue;
 
             const item = document.createElement('div');
             item.className = 'role-reveal-item';
             item.innerHTML = `
-                <span>${players[playerId]?.name || playerId}</span>
+                <span>${this.escapeHTML(players[playerId]?.name || playerId)}</span>
                 <span class="role-tag ${role.team}">${role.icon} ${role.name}</span>
             `;
             rolesDiv.appendChild(item);
@@ -440,7 +466,7 @@ const UI = {
         neutralResults.forEach((result) => {
             neutralDiv.innerHTML += `
                 <div style="margin: 8px 0;">
-                    <strong>${result.playerName}</strong> (${result.role.name}): ${result.won ? '胜利' : '失败'}
+                    <strong>${this.escapeHTML(result.playerName)}</strong> (${result.role.name}): ${result.won ? '胜利' : '失败'}
                     <br><small style="color: var(--text-muted);">${result.reason}</small>
                 </div>
             `;
@@ -513,14 +539,15 @@ const UI = {
             const tag = [];
             if (playerId === captainId) tag.push('队长');
             if (playerId === RoomManager.playerId) tag.push('你');
-            if (player.connected === false) tag.push('离线');
+            if (player.left) tag.push('已离场');
+            else if (player.connected === false) tag.push('离线');
 
             const div = document.createElement('div');
             div.className = 'game-player';
             if (playerId === captainId) div.classList.add('captain');
             if (playerId === gameData.exileTarget) div.classList.add('exile-selected');
             if (exiledPlayers.includes(playerId)) div.classList.add('exiled');
-            if (player.connected === false) div.classList.add('offline');
+            if (player.left || player.connected === false) div.classList.add('offline');
 
             if (playerId === gameData.exileTarget) {
                 div.style.borderColor = 'var(--accent-red)';
@@ -528,11 +555,17 @@ const UI = {
             }
 
             div.innerHTML = `
-                <div class="player-name">${player.name}</div>
+                <div class="player-name">${this.escapeHTML(player.name)}</div>
                 <div class="player-tag">${tag.join(' / ')}</div>
             `;
 
-            if (selectable && playerId !== captainId && !exiledPlayers.includes(playerId)) {
+            if (
+                selectable
+                && playerId !== captainId
+                && !exiledPlayers.includes(playerId)
+                && !player.left
+                && player.connected !== false
+            ) {
                 div.addEventListener('click', () => onSelect?.(playerId));
             }
 

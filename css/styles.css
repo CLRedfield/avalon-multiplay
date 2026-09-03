@@ -126,7 +126,8 @@ body::before {
 }
 
 /* ===== Form Elements ===== */
-input[type="text"] {
+input[type="text"],
+select {
     width: 100%;
     padding: 16px 20px;
     background: rgba(255, 255, 255, 0.8);
@@ -138,10 +139,55 @@ input[type="text"] {
     transition: all 0.3s ease;
 }
 
-input[type="text"]:focus {
+input[type="text"]:focus,
+select:focus {
     outline: none;
     border-color: var(--accent-blue);
     box-shadow: 0 0 15px rgba(59, 130, 246, 0.15);
+}
+
+.broker-label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.broker-select {
+    width: 100%;
+    cursor: pointer;
+}
+
+.broker-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: -2px 2px 16px;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.broker-status-dot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+.broker-status[data-state="connecting"] .broker-status-dot {
+    background: var(--accent-gold);
+}
+
+.broker-status[data-state="connected"] .broker-status-dot {
+    background: var(--accent-green);
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.55);
+}
+
+.broker-status[data-state="error"] .broker-status-dot,
+.broker-status[data-state="offline"] .broker-status-dot {
+    background: var(--accent-red);
 }
 
 input[type="text"]::placeholder {

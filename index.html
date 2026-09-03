@@ -8,9 +8,8 @@
     <title>Avalon - 阿瓦隆</title>
     <link rel="stylesheet" href="css/styles.css">
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
-    <!-- Firebase -->
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <!-- MQTT.js browser bundle -->
+    <script src="https://unpkg.com/mqtt@5.15.2/dist/mqtt.min.js"></script>
 </head>
 
 <body>
@@ -24,6 +23,13 @@
                 </div>
 
                 <div class="glass card">
+                    <label class="broker-label" for="broker-select">联机服务器</label>
+                    <select id="broker-select" class="broker-select"></select>
+                    <div id="broker-status" class="broker-status" data-state="idle">
+                        <span class="broker-status-dot"></span>
+                        <span class="broker-status-text">将在创建或加入房间时连接</span>
+                    </div>
+
                     <input type="text" id="player-name" placeholder="输入你的昵称" maxlength="12">
                     <button id="create-room-btn" class="btn btn-primary">
                         <span>创建房间</span>
@@ -273,8 +279,9 @@
                     <p id="result-description"></p>
                     <div id="all-roles" class="all-roles"></div>
                     <div id="neutral-results" class="neutral-results"></div>
-                    <div id="result-countdown" class="vote-countdown" style="margin-top: 20px;">
-                        <span id="result-countdown-num">5</span> 秒后返回大厅...
+                    <div id="result-actions" style="margin-top: 20px;">
+                        <button id="return-lobby-btn" class="btn btn-primary" style="display: none;">返回大厅 / 再来一局</button>
+                        <p id="result-host-waiting" class="hint" style="display: none;">等待房主返回大厅...</p>
                     </div>
                 </div>
             </div>
@@ -306,12 +313,13 @@
     </div>
 
     <!-- Scripts -->
-    <script src="js/firebase-config.js"></script>
-    <script src="js/roles.js"></script>
-    <script src="js/room-manager.js"></script>
-    <script src="js/game.js"></script>
-    <script src="js/ui.js"></script>
-    <script src="js/app.js"></script>
+    <script src="js/mqtt-config.js?v=20260902-8"></script>
+    <script src="js/mqtt-database.js?v=20260902-8"></script>
+    <script src="js/roles.js?v=20260902-8"></script>
+    <script src="js/room-manager.js?v=20260902-8"></script>
+    <script src="js/game.js?v=20260902-8"></script>
+    <script src="js/ui.js?v=20260902-8"></script>
+    <script src="js/app.js?v=20260902-8"></script>
 </body>
 
 </html>

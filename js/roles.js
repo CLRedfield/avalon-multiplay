@@ -62,21 +62,21 @@ const ROLES = {
         name: '替罪羊',
         icon: '🐑',
         team: 'neutral',
-        description: '在梅林视角中你会被当成坏人。你的胜利条件是被放逐。你整局只能提交 1 次失败牌。'
+        description: '在梅林视角中你会被当成坏人。你的胜利条件是被放逐；被放逐时立即由你单独获胜。你整局只能提交 1 次失败牌。'
     },
     ARMS_DEALER: {
         id: 'armsdealer',
         name: '军火商',
         icon: '💣',
         team: 'neutral',
-        description: '你看起来像好人。只要你存活并进入第 5 轮任务，你就单独获胜。'
+        description: '梅林无法看出你。只要你存活并进入第 5 轮任务，你就立即单独获胜；你可以不限次数提交失败牌。'
     },
     CULTIST: {
         id: 'cultist',
         name: '狂热者',
         icon: '🔥',
         team: 'neutral',
-        description: '你看起来像好人。只要至少三名玩家被放逐且你仍然存活，你就单独获胜。'
+        description: '梅林无法看出你。只要至少三名玩家被放逐且你仍然存活，你就立即单独获胜；你可以不限次数提交失败牌。'
     }
 };
 
@@ -113,8 +113,8 @@ const ROLE_DISTRIBUTION = {
         neutralFallback: ROLES.LOYAL
     },
     9: {
-        good: [ROLES.MERLIN, ROLES.PERCIVAL, ROLES.INQUISITOR, ROLES.LOYAL, ROLES.LOYAL],
-        evil: [ROLES.MORGANA, ROLES.ASSASSIN, ROLES.MINION],
+        good: [ROLES.MERLIN, ROLES.PERCIVAL, ROLES.INQUISITOR, ROLES.LOYAL, ROLES.LOYAL, ROLES.LOYAL],
+        evil: [ROLES.MORGANA, ROLES.ASSASSIN],
         neutralCount: 1,
         neutralFallback: ROLES.LOYAL
     },
@@ -122,7 +122,7 @@ const ROLE_DISTRIBUTION = {
         good: [ROLES.MERLIN, ROLES.PERCIVAL, ROLES.INQUISITOR, ROLES.LOYAL, ROLES.LOYAL, ROLES.LOYAL],
         evil: [ROLES.MORGANA, ROLES.ASSASSIN, ROLES.MINION],
         neutralCount: 0,
-        flexRoleMode: 'oberonOrNeutral'
+        flexRoleMode: 'neutralWithOberonFallback'
     }
 };
 
@@ -144,13 +144,8 @@ function assignRoles(playerIds, neutralPool) {
         }
     }
 
-    if (distribution.flexRoleMode === 'oberonOrNeutral') {
-        const useNeutral = availableNeutralPool.length > 0 && Math.random() < 0.5;
-        if (useNeutral) {
-            allRoles.push(pickRandomRole(availableNeutralPool, ROLES.OBERON));
-        } else {
-            allRoles.push(ROLES.OBERON);
-        }
+    if (distribution.flexRoleMode === 'neutralWithOberonFallback') {
+        allRoles.push(pickRandomRole(availableNeutralPool, ROLES.OBERON));
     }
 
     if (allRoles.length !== playerCount) {

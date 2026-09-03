@@ -8,6 +8,8 @@ const RoomManager = {
     roomState: 'waiting',
     latestPlayers: {},
     latestGame: null,
+    isLeaving: false,
+    gameStartPending: false,
     sessionKey: 'awaron_session',
 
     _generateRoomCode() {
@@ -29,7 +31,8 @@ const RoomManager = {
         localStorage.setItem(this.sessionKey, JSON.stringify({
             roomCode: this.currentRoom,
             playerId: this.playerId,
-            playerName: this.playerName || ''
+            playerName: this.playerName || '',
+            brokerUrl: database.brokerUrl || MQTTBrokerConfig.getSelectedBroker()
         }));
     },
 
@@ -59,14 +62,15 @@ const RoomManager = {
         await playerRef.update({
             connected: true,
             disconnectedAt: null,
-            lastSeen: firebase.database.ServerValue.TIMESTAMP,
+            lastSeen: Date.now(),
+            transportId: database.transportId,
             left: false
         });
 
         await playerRef.onDisconnect().update({
             connected: false,
-            disconnectedAt: firebase.database.ServerValue.TIMESTAMP,
-            lastSeen: firebase.database.ServerValue.TIMESTAMP
+            disconnectedAt: Date.now(),
+            lastSeen: Date.now()
         });
     },
 
@@ -136,6 +140,7 @@ const RoomManager = {
         let exists = true;
         while (exists) {
             roomCode = this._generateRoomCode();
+            await database.connectForRoom(roomCode, this.playerId, MQTTBrokerConfig.getSelectedBroker());
             const snapshot = await database.ref('rooms/' + roomCode).once('value');
             exists = snapshot.exists();
         }
@@ -148,7 +153,8 @@ const RoomManager = {
             code: roomCode,
             host: this.playerId,
             state: 'waiting',
-            createdAt: firebase.database.ServerValue.TIMESTAMP,
+            createdAt: Date.now(),
+            brokerUrl: database.brokerUrl,
             settings: {
                 neutralPool: ['scapegoat', 'armsdealer', 'cultist']
             },
@@ -160,6 +166,9 @@ const RoomManager = {
                     isExiled: false,
                     connected: true,
                     disconnectedAt: null,
+                    transportId: database.transportId,
+                    authPublicKey: database.publicSigningKey,
+                    encryptionPublicKey: database.publicEncryptionKey,
                     left: false,
                     joinedAt: Date.now()
                 }
@@ -181,7 +190,25 @@ const RoomManager = {
         this.hostId = null;
         this.currentRoom = roomCode;
 
+        await database.connectForRoom(roomCode, this.playerId, MQTTBrokerConfig.getSelectedBroker());
         const roomRef = database.ref('rooms/' + roomCode);
+        const initialSnapshot = await roomRef.once('value');
+        if (!initialSnapshot.exists()) {
+            throw new Error('房间不存在');
+        }
+
+        const initialRoom = initialSnapshot.val();
+        if (initialRoom.state !== 'waiting') {
+            throw new Error('游戏已经开始');
+        }
+
+        const initialConnectedCount = Object.values(initialRoom.players || {})
+            .filter((player) => player && !player.left && player.connected !== false)
+            .length;
+        if (initialConnectedCount >= 10) {
+            throw new Error('房间已满');
+        }
+
         const playerPayload = {
             name: playerName,
             isHost: false,
@@ -189,12 +216,15 @@ const RoomManager = {
             isExiled: false,
             connected: true,
             disconnectedAt: null,
+            transportId: database.transportId,
+            authPublicKey: database.publicSigningKey,
+            encryptionPublicKey: database.publicEncryptionKey,
             left: false,
             joinedAt: Date.now()
         };
 
         const transactionResult = await roomRef.transaction((room) => {
-            if (!room) return room;
+            if (!room) return;
             if (room.state !== 'waiting') return;
 
             const players = room.players || {};
@@ -236,11 +266,14 @@ const RoomManager = {
         const session = this._loadSession();
         if (!session?.roomCode || !session?.playerId) return null;
 
+        const brokerUrl = MQTTBrokerConfig.setSelectedBroker(session.brokerUrl || MQTTBrokerConfig.getSelectedBroker());
+        await database.connectForRoom(session.roomCode, session.playerId, brokerUrl);
         const roomRef = database.ref('rooms/' + session.roomCode);
         const snapshot = await roomRef.once('value');
 
         if (!snapshot.exists()) {
             this._clearSession();
+            await database.disconnectRoom();
             return null;
         }
 
@@ -249,11 +282,17 @@ const RoomManager = {
 
         if (!player || player.left) {
             this._clearSession();
+            await database.disconnectRoom();
             return null;
         }
 
-        if (roomData.state === 'playing' && roomData.game?.roles && !roomData.game.roles[session.playerId]) {
+        if (
+            roomData.state === 'playing'
+            && Array.isArray(roomData.game?.playerOrder)
+            && !roomData.game.playerOrder.includes(session.playerId)
+        ) {
             this._clearSession();
+            await database.disconnectRoom();
             return null;
         }
 
@@ -280,37 +319,52 @@ const RoomManager = {
     async leaveRoom() {
         if (!this.roomRef || !this.playerId) return;
 
-        await this._cancelPresence();
+        this.isLeaving = true;
 
-        await this.roomRef.transaction((room) => {
-            if (!room?.players || !room.players[this.playerId]) return room;
+        try {
+            await this._cancelPresence();
 
-            delete room.players[this.playerId];
+            if (this.roomState === 'playing') {
+                await this._getPlayerRef().update({
+                    left: true,
+                    connected: false,
+                    disconnectedAt: Date.now(),
+                    lastSeen: Date.now()
+                });
 
-            if (room.game) {
-                if (room.game.roles) delete room.game.roles[this.playerId];
-                room.game.playerOrder = (room.game.playerOrder || []).filter((playerId) => playerId !== this.playerId);
-                room.game.selectedTeam = (room.game.selectedTeam || []).filter((playerId) => playerId !== this.playerId);
-                room.game.exiledPlayers = (room.game.exiledPlayers || []).filter((playerId) => playerId !== this.playerId);
-            }
-
-            const remainingIds = Object.keys(room.players);
-            if (remainingIds.length === 0) {
-                return null;
-            }
-
-            if (room.host === this.playerId) {
-                const nextHostId = this._pickHostId(room, this.playerId);
-                if (!nextHostId) {
-                    return null;
+                if (this.isHost) {
+                    await this.roomRef.transaction((room) => {
+                        if (!room?.players?.[this.playerId]) return;
+                        const nextHostId = this._pickHostId(room, this.playerId);
+                        if (nextHostId) room.host = nextHostId;
+                        return this._syncHostFlags(room);
+                    }, undefined, false);
                 }
-                room.host = nextHostId;
+            } else {
+                await this.roomRef.transaction((room) => {
+                    if (!room?.players || !room.players[this.playerId]) return room;
+
+                    delete room.players[this.playerId];
+
+                    const remainingIds = Object.keys(room.players);
+                    if (remainingIds.length === 0) return null;
+
+                    if (room.host === this.playerId) {
+                        const nextHostId = this._pickHostId(room, this.playerId);
+                        if (!nextHostId) return null;
+                        room.host = nextHostId;
+                    }
+
+                    return this._syncHostFlags(room);
+                }, undefined, false);
             }
 
-            return this._syncHostFlags(room);
-        }, undefined, false);
-
-        this._cleanup(true);
+            await database.disconnectRoom();
+            this._cleanup(true);
+        } catch (error) {
+            this.isLeaving = false;
+            throw error;
+        }
     },
 
     async updateNeutralPool(pool) {
@@ -326,73 +380,110 @@ const RoomManager = {
     async startGame() {
         if (!this.roomRef || !this.isHost) return;
 
-        const transactionResult = await this.roomRef.transaction((room) => {
-            if (!room || room.state !== 'waiting') return;
+        let preparedSecrets = null;
+        let preparedPrivateRoles = [];
+        this.gameStartPending = true;
 
-            const allPlayers = room.players || {};
-            const activeEntries = Object.entries(allPlayers).filter(([, player]) => player && !player.left && player.connected !== false);
+        try {
+            const transactionResult = await this.roomRef.transaction((room) => {
+                if (!room || room.state !== 'waiting') return;
 
-            if (activeEntries.length < 5 || activeEntries.length > 10) {
-                return;
-            }
+                const allPlayers = room.players || {};
+                const activeEntries = Object.entries(allPlayers).filter(([, player]) => player && !player.left && player.connected !== false);
 
-            room.players = Object.fromEntries(activeEntries.map(([playerId, player]) => [
-                playerId,
-                {
-                    ...player,
-                    isReady: false,
-                    isExiled: false
+                if (activeEntries.length < 5 || activeEntries.length > 10) {
+                    return;
                 }
-            ]));
 
-            if (!room.players[room.host]) {
-                room.host = activeEntries[0][0];
+                room.players = Object.fromEntries(activeEntries.map(([playerId, player]) => [
+                    playerId,
+                    {
+                        ...player,
+                        isReady: false,
+                        isExiled: false
+                    }
+                ]));
+
+                if (!room.players[room.host]) {
+                    room.host = activeEntries[0][0];
+                }
+
+                this._syncHostFlags(room);
+
+                const playerIds = activeEntries.map(([playerId]) => playerId);
+                const neutralPool = (room.settings?.neutralPool || []).map((id) => getNeutralRole(id)).filter(Boolean);
+                const roleAssignments = assignRoles(playerIds, neutralPool);
+                const roles = {};
+
+                for (const [playerId, role] of Object.entries(roleAssignments)) {
+                    roles[playerId] = role.id;
+                }
+
+                const gameId = 'game_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+                preparedSecrets = {
+                    gameId,
+                    roles,
+                    missionCards: {},
+                    missionHistory: {},
+                    neutralFailUsage: {},
+                    privateStates: {}
+                };
+                preparedPrivateRoles = playerIds.map((playerId) => {
+                    const value = {
+                        type: 'role',
+                        gameId,
+                        roleId: roles[playerId],
+                        nightInfo: getNightInfo(roleAssignments[playerId], roleAssignments, playerId),
+                        neutralFailUsed: false
+                    };
+                    preparedSecrets.privateStates[playerId] = value;
+                    return { playerId, value };
+                });
+
+                room.game = {
+                    gameId,
+                    phase: 'night',
+                    playerOrder: this._shuffleList(playerIds),
+                    captainIndex: 0,
+                    currentMission: 0,
+                    rejectCount: 0,
+                    selectedTeam: [],
+                    exileTarget: null,
+                    actionType: null,
+                    voteType: null,
+                    votes: {},
+                    missionSubmitted: {},
+                    missionResults: [null, null, null, null, null],
+                    missionTeamHistory: {},
+                    exiledPlayers: [],
+                    inquisitorUsed: {},
+                    tribunalVotes: {},
+                    tribunalInitiateVotes: {},
+                    assassinTarget: null
+                };
+
+                room.state = 'playing';
+                return room;
+            }, undefined, false);
+
+            if (!transactionResult.committed) {
+                throw new Error('开始游戏失败，请重试');
             }
 
-            this._syncHostFlags(room);
-
-            const playerIds = activeEntries.map(([playerId]) => playerId);
-            const neutralPool = (room.settings?.neutralPool || []).map((id) => getNeutralRole(id)).filter(Boolean);
-            const roleAssignments = assignRoles(playerIds, neutralPool);
-            const roles = {};
-
-            for (const [playerId, role] of Object.entries(roleAssignments)) {
-                roles[playerId] = role.id;
+            database.setHostSecrets(preparedSecrets);
+            this.gameStartPending = false;
+            for (const privateRole of preparedPrivateRoles) {
+                await database.publishPrivate(privateRole.playerId, privateRole.value);
             }
-
-            room.game = {
-                phase: 'night',
-                roles: roles,
-                playerOrder: this._shuffleList(playerIds),
-                captainIndex: 0,
-                currentMission: 0,
-                rejectCount: 0,
-                selectedTeam: [],
-                exileTarget: null,
-                actionType: null,
-                voteType: null,
-                votes: {},
-                missionCards: {},
-                missionResults: [null, null, null, null, null],
-                missionHistory: {},
-                exiledPlayers: [],
-                inquisitorUsed: {},
-                tribunalVotes: {},
-                tribunalInitiateVotes: {},
-                assassinTarget: null
-            };
-
-            room.state = 'playing';
-            return room;
-        }, undefined, false);
-
-        if (!transactionResult.committed) {
-            throw new Error('开始游戏失败，请重试');
+        } finally {
+            this.gameStartPending = false;
         }
     },
 
     async resetToLobby() {
         if (!this.roomRef || !this.isHost) return;
+
+        const playerIds = Object.keys(this.latestPlayers || {});
 
         await this.roomRef.transaction((room) => {
             if (!room) return room;
@@ -415,25 +506,41 @@ const RoomManager = {
 
             return this._syncHostFlags(room);
         }, undefined, false);
+
+        database.setHostSecrets(null);
+        for (const playerId of playerIds) {
+            await database.clearPrivate(playerId).catch(() => undefined);
+        }
+        GameManager.privateRoleId = null;
+        GameManager.privateNightInfo = [];
+        GameManager.privateGameId = null;
+        GameManager.privateNeutralFailUsed = false;
     },
 
     async _ensureActiveHost() {
         if (!this.roomRef) return;
 
+        const knownHostId = this.hostId || Object.keys(this.latestPlayers || {})
+            .find((playerId) => this.latestPlayers[playerId]?.isHost);
+        const knownHost = knownHostId ? this.latestPlayers?.[knownHostId] : null;
+        if (knownHost && !knownHost.left && knownHost.connected !== false) {
+            return;
+        }
+
         try {
             await this.roomRef.transaction((room) => {
-                if (!room?.players) return room;
+                if (!room?.players) return;
 
                 const currentHost = room.host;
                 const currentHostPlayer = currentHost ? room.players[currentHost] : null;
 
                 if (currentHostPlayer && !currentHostPlayer.left && currentHostPlayer.connected !== false) {
-                    return room;
+                    return;
                 }
 
                 const nextHostId = this._pickHostId(room, currentHost);
                 if (!nextHostId) {
-                    return room;
+                    return;
                 }
 
                 room.host = nextHostId;
@@ -462,7 +569,9 @@ const RoomManager = {
                 window.onPlayersChange(players);
             }
 
-            this._ensureActiveHost();
+            if (!this.isLeaving) {
+                this._ensureActiveHost();
+            }
         });
 
         this.roomRef.child('host').on('value', (snapshot) => {
@@ -515,6 +624,14 @@ const RoomManager = {
         this.roomState = 'waiting';
         this.latestPlayers = {};
         this.latestGame = null;
+        this.isLeaving = false;
+        this.gameStartPending = false;
+
+        if (database.connected) {
+            database.disconnectRoom().catch((error) => {
+                console.warn('[RoomManager] MQTT disconnect failed', error);
+            });
+        }
     }
 };
 
