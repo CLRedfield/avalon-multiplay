@@ -10,7 +10,7 @@ const RoomManager = {
     latestGame: null,
     isLeaving: false,
     gameStartPending: false,
-    sessionKey: 'awaron_session',
+    sessionKey: 'avalon_session_v5',
 
     _generateRoomCode() {
         const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -158,7 +158,7 @@ const RoomManager = {
             createdAt: Date.now(),
             brokerUrl: database.brokerUrl,
             settings: {
-                neutralPool: ['scapegoat', 'armsdealer', 'cultist']
+                template: GameConfig.preset('legacy')
             },
             players: {
                 [this.playerId]: {
@@ -379,6 +379,17 @@ const RoomManager = {
         await this.roomRef.child('players/' + this.playerId + '/isReady').set(isReady);
     },
 
+    async updateTemplate(template) {
+        if (!this.roomRef || !this.isHost) throw new Error('只有房主可以调整玩法');
+        const clean = GameConfig.normalizeTemplate(template);
+        const result = await this.roomRef.transaction((room) => {
+            if (!room || room.state !== 'waiting' || room.host !== this.playerId) return;
+            room.settings = { template: clean };
+            return room;
+        }, undefined, false);
+        if (!result.committed) throw new Error('只能在大厅修改玩法');
+    },
+
     async startGame() {
         if (!this.roomRef || !this.isHost || this.gameStartPending) return;
 
@@ -415,8 +426,8 @@ const RoomManager = {
                 this._syncHostFlags(room);
 
                 const playerIds = activeEntries.map(([playerId]) => playerId);
-                const neutralPool = (room.settings?.neutralPool || []).map((id) => getNeutralRole(id)).filter(Boolean);
-                const roleAssignments = assignRoles(playerIds, neutralPool);
+                const rules = GameConfig.resolve(room.settings, playerIds.length);
+                const roleAssignments = GameConfig.assign(playerIds, rules);
                 const roles = {};
 
                 for (const [playerId, role] of Object.entries(roleAssignments)) {
@@ -432,13 +443,15 @@ const RoomManager = {
                     neutralFailUsage: {},
                     privateStates: {}
                 };
+                GameManager.createExpansionSecrets(preparedSecrets, playerIds);
                 preparedPrivateRoles = playerIds.map((playerId) => {
                     const value = {
                         type: 'role',
                         gameId,
                         roleId: roles[playerId],
                         nightInfo: getNightInfo(roleAssignments[playerId], roleAssignments, playerId),
-                        neutralFailUsed: false
+                        neutralFailUsed: false,
+                        expansion: GameManager.expansionForPlayer(preparedSecrets, playerId)
                     };
                     preparedSecrets.privateStates[playerId] = value;
                     return { playerId, value };
@@ -446,6 +459,8 @@ const RoomManager = {
 
                 room.game = {
                     gameId,
+                    rules,
+                    history: [],
                     phase: 'night',
                     playerOrder: playerIds,
                     captainIndex: Math.floor(Math.random() * playerIds.length),
@@ -520,6 +535,8 @@ const RoomManager = {
         GameManager.privateNightInfo = [];
         GameManager.privateGameId = null;
         GameManager.privateNeutralFailUsed = false;
+        GameManager.privateExpansion = null;
+        GameManager.privateInquisitorUsed = false;
     },
 
     async _ensureActiveHost() {
@@ -597,6 +614,7 @@ const RoomManager = {
 
         this.roomRef.child('settings').on('value', (snapshot) => {
             const settings = snapshot.val() || {};
+            this.latestSettings = settings;
             if (window.onSettingsChange) {
                 window.onSettingsChange(settings);
             }
@@ -629,10 +647,21 @@ const RoomManager = {
         this.roomState = 'waiting';
         this.latestPlayers = {};
         this.latestGame = null;
+        this.latestSettings = {};
         this.isLeaving = false;
         this.gameStartPending = false;
 
-        if (typeof GameManager !== 'undefined') GameManager.selectionDraft = null;
+        if (typeof GameManager !== 'undefined') {
+            GameManager.selectionDraft = null;
+            GameManager.gameData = null;
+            GameManager.privateRoleId = null;
+            GameManager.privateGameId = null;
+            GameManager.privateNightInfo = [];
+            GameManager.privateExpansion = null;
+            GameManager.privateInquisitorUsed = false;
+            GameManager.lastPrivateInquisitorResult = null;
+        }
+        if (typeof Workshop !== 'undefined' && typeof document !== 'undefined') Workshop.updateGame(null);
 
         if (database.client || database.connected) {
             database.disconnectRoom().catch((error) => {

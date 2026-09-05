@@ -15,7 +15,9 @@ const context = vm.createContext({
 });
 
 vm.runInContext(fs.readFileSync(path.join(projectRoot, 'js', 'roles.js'), 'utf8'), context);
+vm.runInContext(fs.readFileSync(path.join(projectRoot, 'js', 'rules-config.js'), 'utf8'), context);
 vm.runInContext(fs.readFileSync(path.join(projectRoot, 'js', 'game.js'), 'utf8'), context);
+vm.runInContext(fs.readFileSync(path.join(projectRoot, 'js', 'game-expansion.js'), 'utf8'), context);
 
 const GameManager = context.window.GameManager;
 const assignRoles = context.window.assignRoles;

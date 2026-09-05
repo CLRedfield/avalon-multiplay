@@ -40,29 +40,8 @@ const UI = {
     renderRuleSummary(mountId) {
         const container = document.getElementById(mountId);
         if (!container) return;
-
-        const neutralMissionRule = GAME_RULES.neutralCanFailMissions
-            ? '中立角色上车时可以提交失败牌；替罪羊整局限 1 次，军火商和狂热者不限次数。'
-            : '中立角色上车时只能提交成功牌。';
-        const exileTieRule = GAME_RULES.exileTieBehavior === 'noExile'
-            ? '队长选择放逐后，无论投票通过与否，任务轮次都不变并轮换下一位队长；平票视为未通过。'
-            : '放逐投票若最高票平票，将按系统预设规则继续结算。';
-        const exileLimitRule = Number.isInteger(GAME_RULES.maxExilesPerGame)
-            ? `每局最多可发起 ${GAME_RULES.maxExilesPerGame} 次放逐。`
-            : '每局不限次放逐，队长每轮都可以选择任务或放逐。';
-
-        container.innerHTML = `
-            <div class="glass card rules-card">
-                <h3 class="rules-title">规则说明</h3>
-                <ul class="rules-list">
-                    <li>7 人及以上时，第 4 轮任务需要至少 2 张失败牌才会失败。</li>
-                    <li>${neutralMissionRule}</li>
-                    <li>${exileTieRule}</li>
-                    <li>${exileLimitRule}</li>
-                    <li>9 人局为 6 好人、2 坏人、1 中立；10 人局勾选中立池后必定抽取 1 名中立角色。</li>
-                </ul>
-            </div>
-        `;
+        container.innerHTML = mountId === 'home-rules'
+            ? '<div class="rules-card"><p class="hint">5—10 人 · 6 套玩法模板 · 固定阵营<br>在大厅选择预设，或编辑角色、技能与事件组合。</p></div>' : '';
     },
 
     renderRuleSummaries() {
@@ -323,7 +302,8 @@ const UI = {
     },
 
     renderMissionTrack(results, currentMission, playerCount) {
-        const sizes = MISSION_SIZES[playerCount] || [2, 3, 2, 3, 3];
+        const game = GameManager.gameData;
+        const sizes = game?.rules?.missionSizes || MISSION_SIZES[playerCount] || [2, 3, 2, 3, 3];
         const missionResults = results || [null, null, null, null, null];
 
         for (let index = 0; index < 5; index++) {
@@ -331,14 +311,17 @@ const UI = {
             if (!mission) continue;
 
             mission.classList.remove('current', 'success', 'fail');
-            mission.innerHTML = `<span>${sizes[index]}</span>`;
+            const size = index === currentMission && game ? GameManager.getCurrentMissionSize(game) : sizes[index];
+            const fails = index === currentMission && game ? GameManager.getRequiredMissionFails(game) : game?.rules?.missionFails[index] || (index === 3 && playerCount >= 7 ? 2 : 1);
+            mission.innerHTML = `<span>${size}</span>`;
+            mission.title = `第 ${index + 1} 场，${size} 人，${fails} 张失败牌判失败`;
 
             if (missionResults[index] === true) {
                 mission.classList.add('success');
-                mission.innerHTML = '<span>✓</span>';
+                mission.innerHTML = game?.missionWeights?.[index] === 2 ? '<span>✓×2</span>' : '<span>✓</span>';
             } else if (missionResults[index] === false) {
                 mission.classList.add('fail');
-                mission.innerHTML = '<span>✕</span>';
+                mission.innerHTML = game?.missionWeights?.[index] === 2 ? '<span>✕×2</span>' : '<span>✕</span>';
             } else if (index === currentMission) {
                 mission.classList.add('current');
             }
@@ -346,10 +329,10 @@ const UI = {
     },
 
     renderRejectTrack(rejectCount) {
-        for (let index = 1; index <= 5; index++) {
-            const marker = document.getElementById('reject-' + index);
-            marker.classList.toggle('active', index <= rejectCount);
-        }
+        const limit = GameManager.rules().rejectionLimit;
+        const container = document.querySelector('.reject-markers');
+        if (!container) return;
+        container.innerHTML = Array.from({ length: limit }, (_, i) => `<div class="reject-marker ${i < rejectCount ? 'active' : ''}" title="${i + 1} / ${limit}"></div>`).join('');
     },
 
     renderGamePlayers(players, gameData, selectable = false, onSelect = null) {
@@ -517,7 +500,7 @@ const UI = {
             return;
         }
 
-        instruction.textContent = '好人完成了三次任务。请选择你认为是梅林的玩家进行刺杀。';
+        instruction.textContent = '好人累计三点任务进度。请选择你认为是梅林的玩家进行刺杀。';
         waiting.style.display = 'none';
 
         for (const playerId of this.getPlayerDisplayOrder(players, gameData)) {

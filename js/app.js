@@ -12,6 +12,7 @@ const App = {
     init() {
         this.setupBrokerSelector();
         this.bindEvents();
+        Workshop.init();
         UI.renderRuleSummaries();
         UI.showView('home');
         this.setHomeActionsBusy(true);
@@ -102,9 +103,6 @@ const App = {
         document.getElementById('start-game-btn').addEventListener('click', () => this.startGame());
         document.getElementById('leave-room-btn').addEventListener('click', () => this.leaveRoom());
 
-        document.getElementById('neutral-scapegoat').addEventListener('change', () => this.updateNeutralPool());
-        document.getElementById('neutral-armsdealer').addEventListener('change', () => this.updateNeutralPool());
-        document.getElementById('neutral-cultist').addEventListener('change', () => this.updateNeutralPool());
 
         document.getElementById('ready-btn').addEventListener('click', () => this.setReady());
         document.getElementById('vote-approve').addEventListener('click', () => this.castVote(true));
@@ -149,21 +147,8 @@ const App = {
         hostPanel.style.display = RoomManager.isHost ? 'block' : 'none';
         guestPanel.style.display = RoomManager.isHost ? 'none' : 'block';
 
-        const players = GameManager.players || {};
-        const connectedCount = Object.values(players).filter((player) => player && !player.left && player.connected !== false).length;
-        const enableNeutral = connectedCount >= 7;
-        const neutralHint = hostPanel.querySelector('.hint');
-
-        ['neutral-scapegoat', 'neutral-armsdealer', 'neutral-cultist'].forEach((id) => {
-            const checkbox = document.getElementById(id);
-            checkbox.disabled = !enableNeutral;
-        });
-
-        if (neutralHint) {
-            neutralHint.textContent = enableNeutral
-                ? '至少选择一个中立角色，游戏会从已勾选池中随机抽取。'
-                : '5-6 人局默认不开中立，7 人以上才会启用中立池。';
-        }
+        Workshop.renderLobby();
+        if (RoomManager.roomState !== 'waiting') document.getElementById('workshop-dialog').close();
     },
 
     clearTimer(timerKey) {
@@ -221,6 +206,9 @@ const App = {
         if (!RoomManager.isHost || !GameManager.gameData) return;
 
         switch (GameManager.gameData.phase) {
+            case 'roundSkill':
+                this.scheduleSkillsAdvance();
+                break;
             case 'voteResult':
                 this.scheduleVoteResultAdvance();
                 break;
@@ -230,6 +218,20 @@ const App = {
             case 'ended':
                 break;
         }
+    },
+
+    scheduleSkillsAdvance() {
+        if (!RoomManager.isHost || this.phaseTimers.roundSkill || GameManager.gameData?.phase !== 'roundSkill') return;
+        const gameId = GameManager.gameData.gameId;
+        const mission = GameManager.gameData.currentMission;
+        this.phaseTimers.roundSkill = setTimeout(async () => {
+            this.phaseTimers.roundSkill = null;
+            if (GameManager.gameData?.gameId !== gameId || GameManager.gameData?.currentMission !== mission || GameManager.gameData?.phase !== 'roundSkill') return;
+            try { await database.sendAction('advanceSkills', {}); }
+            catch (_) {
+                this.phaseTimers.roundSkill = setTimeout(() => { this.phaseTimers.roundSkill = null; this.scheduleSkillsAdvance(); }, 1000);
+            }
+        }, Math.max(0, GameManager.gameData.skillDeadline - Date.now()) + 30);
     },
 
     updateResultControls() {
@@ -362,24 +364,6 @@ const App = {
         } finally {
             this.roomActionPending = false;
         }
-    },
-
-    async updateNeutralPool() {
-        const pool = [];
-        const connectedCount = Object.values(GameManager.players || {}).filter((player) => player && !player.left && player.connected !== false).length;
-
-        if (connectedCount >= 7) {
-            if (document.getElementById('neutral-scapegoat').checked) pool.push('scapegoat');
-            if (document.getElementById('neutral-armsdealer').checked) pool.push('armsdealer');
-            if (document.getElementById('neutral-cultist').checked) pool.push('cultist');
-        }
-
-        if (connectedCount >= 7 && pool.length === 0) {
-            UI.showToast('至少选择一个中立角色');
-            return;
-        }
-
-        await RoomManager.updateNeutralPool(pool);
     },
 
     async startGame() {
@@ -557,11 +541,7 @@ window.onPlayersChange = (players) => {
         const readyStatus = UI.renderRoleReadyStatus(players, GameManager.gameData);
 
         if (readyStatus && readyStatus.readyCount === readyStatus.totalCount && readyStatus.totalCount > 0 && RoomManager.isHost) {
-            RoomManager.roomRef.child('game').transaction((game) => {
-                if (!game || game.phase !== 'night') return game;
-                game.phase = 'captainChoice';
-                return game;
-            }, undefined, false);
+            database.sendAction('reconcilePresence', {}).catch(() => undefined);
         }
     }
 
@@ -598,14 +578,13 @@ window.onRoomStateChange = (state) => {
 };
 
 window.onSettingsChange = (settings) => {
-    document.getElementById('neutral-scapegoat').checked = (settings.neutralPool || []).includes('scapegoat');
-    document.getElementById('neutral-armsdealer').checked = (settings.neutralPool || []).includes('armsdealer');
-    document.getElementById('neutral-cultist').checked = (settings.neutralPool || []).includes('cultist');
+    RoomManager.latestSettings = settings;
     App.updateLobbyPanels();
 };
 
 window.onGameChange = (game) => {
     GameManager.gameData = game;
+    Workshop.updateGame(game);
     PlayerNotes.useGame(database.brokerUrl, RoomManager.currentRoom, RoomManager.playerId, game);
     GameManager.syncSelectionDraft(game);
 
@@ -629,10 +608,17 @@ window.onGameChange = (game) => {
     App.clearPhaseTimers(
         game.phase === 'voteResult' ? ['voteResult']
             : game.phase === 'missionResult' ? ['missionResult']
+            : game.phase === 'roundSkill' ? ['roundSkill']
             : []
     );
 
     switch (game.phase) {
+        case 'roundSkill': {
+            Workshop.renderSkill(game);
+            App.showRolePanel(GameManager.getMyRole(game));
+            App.scheduleSkillsAdvance();
+            break;
+        }
         case 'night': {
             const myRole = GameManager.getMyRole(game);
             UI.renderRoleCard(myRole, GameManager.privateNightInfo, playerNames);
@@ -662,7 +648,7 @@ window.onGameChange = (game) => {
                         <button class="btn btn-primary" onclick="App.chooseAction('mission')">
                             <span>发起任务</span>
                         </button>
-                        <button class="btn btn-danger" onclick="App.chooseAction('tribunal')">
+                        <button class="btn btn-danger" onclick="App.chooseAction('tribunal')" ${GameManager.canExile(game) ? '' : 'disabled'}>
                             <span>发起放逐</span>
                         </button>
                     </div>
@@ -842,10 +828,10 @@ window.onGameChange = (game) => {
 
             const resultStatus = document.getElementById('mission-result-status');
             if (game.missionResultSuccess) {
-                resultStatus.textContent = '任务成功';
+                resultStatus.textContent = `任务成功 · 计 ${game.missionWeights?.[game.currentMission] || 1} 点`;
                 resultStatus.style.color = 'var(--accent-green)';
             } else {
-                resultStatus.textContent = '任务失败';
+                resultStatus.textContent = `任务失败 · 计 ${game.missionWeights?.[game.currentMission] || 1} 点`;
                 resultStatus.style.color = 'var(--accent-red)';
             }
 

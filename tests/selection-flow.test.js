@@ -19,7 +19,7 @@ function fixture(phase = 'selectTeam') {
         sendAction: async (action, payload) => { calls.push({ action, payload: clone(payload) }); }
     };
     const context = vm.createContext({ console, window: {}, database });
-    for (const file of ['roles.js', 'room-manager.js', 'game.js', 'ui.js']) vm.runInContext(source(file), context);
+    for (const file of ['roles.js', 'rules-config.js', 'room-manager.js', 'game.js', 'game-expansion.js', 'ui.js']) vm.runInContext(source(file), context);
     const { GameManager: gameManager, RoomManager: roomManager, UI: ui } = context.window;
     const players = Object.fromEntries([3, 1, 5, 2, 4].map((n) => [
         'p' + n, { name: String(n), joinedAt: n * 100, connected: true }

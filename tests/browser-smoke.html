@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Avalon 本地界面验收</title>
+<style>body{margin:0;font:14px system-ui;background:#edf2f8;color:#24334d}header{padding:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}button,select{padding:8px;border:1px solid #bac9dd;border-radius:5px;background:white}iframe{width:100%;height:calc(100vh - 112px);border:0}p{margin:0;padding:6px 10px;font-size:12px}</style>
+<header><strong>界面验收</strong><label>身份<select id="fixture-role"><option value="spy">密探</option><option value="witness">见证者</option><option value="oathkeeper">守誓者</option><option value="gambler">赌徒</option><option value="bountyhunter">赏金客</option></select></label>
+<button data-count="5" data-scene="lobby">5 人大厅</button><button data-count="5" data-scene="skill">5 人技能</button><button data-count="7" data-scene="skill">7 人技能</button><button data-count="10" data-scene="skill">10 人技能</button><button data-count="10" data-scene="ended">10 人复盘</button></header>
+<p>仅使用内存中的模拟玩家，不连接 MQTT，不读取或改动浏览器原有存储。实际规则与加密联机由自动化测试覆盖。</p>
+<iframe id="game-preview" title="游戏验收预览"></iframe>
+<script>
+(async () => {
+    let html = await (await fetch('../index.html')).text();
+    html = html.replace('<head>', '<head><base href="/">')
+        .replace(/<script src="https:\/\/unpkg[^>]+><\/script>/, '')
+        .replace(/<script src="js\/mqtt-database[^>]+><\/script>/, '<script src="tests/ui-fixture.js"><' + '/script>');
+    document.querySelector('iframe').srcdoc = html;
+    document.querySelectorAll('[data-scene]').forEach((button) => button.onclick = () => {
+        document.querySelector('iframe').contentWindow.postMessage({ type: 'avalon-ui-fixture', count: Number(button.dataset.count), scene: button.dataset.scene, role: document.querySelector('select').value }, location.origin);
+    });
+})();
+</script></html>

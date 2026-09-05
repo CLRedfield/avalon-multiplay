@@ -4,14 +4,14 @@ const ROLES = {
         name: '梅林',
         icon: '🧙',
         team: 'good',
-        description: '你知道谁是坏人（奥伯伦除外）。如果好人先完成三次任务，刺客还可以尝试刺杀你。'
+        description: '你知道谁是坏人（奥伯伦、隐士除外），呆呆鸟也会出现在你的视野。开启刺杀时，好人累计三点任务进度后，刺客还可以尝试刺杀你。'
     },
     PERCIVAL: {
         id: 'percival',
         name: '派西维尔',
         icon: '🛡️',
         team: 'good',
-        description: '你知道谁是梅林和莫甘娜，但不知道谁是谁。'
+        description: '你看到梅林，以及本局存在的莫甘娜、幻术师，但不知道谁是谁。'
     },
     INQUISITOR: {
         id: 'inquisitor',
@@ -33,7 +33,7 @@ const ROLES = {
         name: '刺客',
         icon: '🗡️',
         team: 'evil',
-        description: '你知道其他坏人（奥伯伦除外）。如果好人先完成三次任务，你可以刺杀一名玩家；刺中梅林则坏人翻盘。'
+        description: '你知道其他坏人（奥伯伦除外）。开启刺杀时，好人累计三点任务进度后，你可以刺杀一名玩家；刺中梅林则坏人翻盘。'
     },
     MORGANA: {
         id: 'morgana',
@@ -59,24 +59,56 @@ const ROLES = {
 
     SCAPEGOAT: {
         id: 'scapegoat',
-        name: '替罪羊',
+        name: '呆呆鸟',
         icon: '🐑',
         team: 'neutral',
-        description: '在梅林视角中你会被当成坏人。你的胜利条件是被放逐；被放逐时立即由你单独获胜。你整局只能提交 1 次失败牌。'
+        description: '在梅林视角中你会被当成坏人。你的胜利条件是被放逐；被放逐时立即获胜。你整局只能提交 1 次失败牌。多个中立同时达标则共同获胜。'
     },
     ARMS_DEALER: {
         id: 'armsdealer',
         name: '军火商',
         icon: '💣',
         team: 'neutral',
-        description: '梅林无法看出你。只要你存活并进入第 5 轮任务，你就立即单独获胜；你可以不限次数提交失败牌。'
+        description: '梅林无法看出你。只要你存活并进入第 5 轮实际任务，你就立即获胜；你可以不限次数提交失败牌。多个中立同时达标则共同获胜。'
+    },
+    WITNESS: {
+        id: 'witness', name: '见证者', icon: '🕯️', team: 'good',
+        description: '每局一次，在技能窗口选择上一场任务中的两名其他队员，私下得知两人是否至少有一人提交失败牌。'
+    },
+    SPY: {
+        id: 'spy', name: '密探', icon: '🔎', team: 'good',
+        description: '每局一次，在技能窗口选择两名其他玩家，私下得知他们是否属于同一阵营。中立单独算一个阵营。'
+    },
+    OATHKEEPER: {
+        id: 'oathkeeper', name: '守誓者', icon: '🛡️', team: 'good',
+        description: '每局一次，在技能窗口保护一名其他玩家，抵消本场任务完成前对他的第一次成功放逐。保护来源不公开，同一目标的保护不叠加。'
+    },
+    HERMIT: {
+        id: 'hermit', name: '隐士', icon: '🌘', team: 'evil',
+        description: '梅林看不到你。你与其他坏人正常互认，奥伯伦除外。'
+    },
+    ILLUSIONIST: {
+        id: 'illusionist', name: '幻术师', icon: '🪞', team: 'evil',
+        description: '你进入派西维尔的候选名单，与梅林、莫甘娜混在一起。你与其他坏人正常互认，奥伯伦除外。'
+    },
+    BLACKGUARD: {
+        id: 'blackguard', name: '黑卫', icon: '⚔️', team: 'evil',
+        description: '每局一次，在技能窗口保护一名其他玩家，抵消本场任务完成前对他的第一次成功放逐。与守誓者的保护完全相同，来源不公开。'
+    },
+    GAMBLER: {
+        id: 'gambler', name: '赌徒', icon: '🎲', team: 'neutral',
+        description: '秘密预测前三场任务的成败，全部命中且未出局时立即获胜。默认成功、失败、成功，可在首次技能窗口修改。你只能提交成功牌。'
+    },
+    BOUNTY_HUNTER: {
+        id: 'bountyhunter', name: '赏金客', icon: '🎯', team: 'neutral',
+        description: '开局随机获得两名其他玩家作为秘密目标。两人都被放逐且你仍在场时立即获胜。你只能提交成功牌。'
     },
     CULTIST: {
         id: 'cultist',
         name: '狂热者',
         icon: '🔥',
         team: 'neutral',
-        description: '梅林无法看出你。只要至少三名玩家被放逐且你仍然存活，你就立即单独获胜；你可以不限次数提交失败牌。'
+        description: '梅林无法看出你。只要至少三名玩家被放逐且你仍然存活，你就立即获胜；你可以不限次数提交失败牌。多个中立同时达标则共同获胜。'
     }
 };
 
@@ -171,7 +203,7 @@ function getNightInfo(myRole, allAssignments, myPlayerId) {
         const evilPlayers = [];
         for (const [playerId, role] of Object.entries(allAssignments)) {
             if (playerId === myPlayerId) continue;
-            if (role.team === 'evil' && role.id !== 'oberon') {
+            if (role.team === 'evil' && !['oberon', 'hermit'].includes(role.id)) {
                 evilPlayers.push(playerId);
             }
             if (role.id === 'scapegoat') {
@@ -187,12 +219,12 @@ function getNightInfo(myRole, allAssignments, myPlayerId) {
         const merlinOrMorgana = [];
         for (const [playerId, role] of Object.entries(allAssignments)) {
             if (playerId === myPlayerId) continue;
-            if (role.id === 'merlin' || role.id === 'morgana') {
+            if (['merlin', 'morgana', 'illusionist'].includes(role.id)) {
                 merlinOrMorgana.push(playerId);
             }
         }
         if (merlinOrMorgana.length > 0) {
-            info.push({ type: 'mystery', label: '这些人里有梅林和莫甘娜', players: merlinOrMorgana });
+            info.push({ type: 'mystery', label: '这些人里有梅林，其他可能是莫甘娜或幻术师', players: merlinOrMorgana });
         }
     }
 
@@ -237,6 +269,10 @@ function getNeutralRole(id) {
             return ROLES.ARMS_DEALER;
         case 'cultist':
             return ROLES.CULTIST;
+        case 'gambler':
+            return ROLES.GAMBLER;
+        case 'bountyhunter':
+            return ROLES.BOUNTY_HUNTER;
         default:
             return null;
     }

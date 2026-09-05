@@ -1,0 +1,118 @@
+[hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+.text-button, .reference-bar button { border: 0; background: transparent; color: #2459a9; font: inherit; font-size: .88rem; cursor: pointer; padding: 10px 4px; min-height: 44px; }
+.text-button:hover, .reference-bar button:hover { color: #133369; text-decoration: underline; text-underline-offset: 4px; }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #60a5fa; outline-offset: 3px; }
+.eyebrow { display: block; font-size: .72rem; letter-spacing: .13em; color: #64748b; font-weight: 700; margin-bottom: 7px; }
+.workshop-lobby { padding: 24px 0; border-top: 1px solid #cbd5e1; }
+.section-heading, .dialog-heading, .workshop-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.section-heading { margin-bottom: 14px; }
+.section-heading h3 { font-size: 1.22rem; }
+.workshop-lobby select, .workshop-dialog select { width: 100%; border: 1px solid #cbd5e1; background: #fff; border-radius: 8px; padding: 11px 12px; min-height: 44px; color: var(--text-primary); font: inherit; font-size: .9rem; }
+.workshop-toolbar { justify-content: flex-start; gap: 24px; margin: 3px 0 10px; }
+.recipe-summary { line-height: 1.8; font-size: .88rem; }
+.recipe-roles { font-weight: 500; }
+.recipe-summary > p { margin-bottom: 10px; }
+.recipe-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; margin: 18px 0; }
+.recipe-facts dt { color: #64748b; font-size: .76rem; }
+.recipe-facts dd { margin: 1px 0 0; font-weight: 500; }
+.recipe-summary details { border-top: 1px solid #dbe3ee; padding: 12px 0; }
+.recipe-summary summary { color: #2459a9; cursor: pointer; padding: 5px 0; }
+.recipe-summary details p { color: #475569; margin: 10px 0; }
+.workshop-dialog { width: min(880px, calc(100% - 32px)); max-height: 90svh; border: 1px solid #d6e0ee; border-radius: 18px; margin: auto; padding: 28px; color: var(--text-primary); background: #f9fbfe; box-shadow: 0 30px 100px #0f172a38; }
+.workshop-dialog[open] { animation: workshop-enter .18s ease-out; }
+.workshop-dialog::backdrop { background: #14233c80; backdrop-filter: blur(3px); }
+.dialog-heading { padding-bottom: 20px; border-bottom: 1px solid #dbe3ee; margin-bottom: 20px; }
+.dialog-heading h2 { font-size: 1.45rem; }
+.workshop-name-row { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 16px; align-items: center; }
+.workshop-dialog input:not([type=checkbox]) { width: 100%; border: 1px solid #cbd5e1; background: white; color: var(--text-primary); font: inherit; font-size: .9rem; border-radius: 7px; padding: 10px; margin: 0; min-height: 42px; }
+.workshop-dialog input[type=checkbox] { appearance: auto; width: 18px; height: 18px; margin: 0; padding: 0; flex: 0 0 18px; accent-color: #2563eb; }
+.count-tabs { display: grid; grid-template-columns: repeat(6, 1fr); margin: 22px 0 10px; gap: 4px; border-bottom: 1px solid #cbd5e1; }
+.count-tabs button { border: 0; border-bottom: 3px solid transparent; padding: 12px 0; background: transparent; color: #64748b; cursor: pointer; font: inherit; transition: border-color .15s, color .15s; }
+.count-tabs button[aria-pressed=true] { border-bottom-color: #2563eb; color: #1d4ed8; font-weight: 700; }
+.editor-section { padding: 26px 0; border-bottom: 1px solid #dbe3ee; }
+.editor-section h3 { font-size: 1rem; margin-bottom: 16px; }
+.editor-section .section-heading h3 { margin: 0; }
+#role-total { font-size: .9rem; font-variant-numeric: tabular-nums; color: #64748b; }
+.role-editor-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 22px; }
+.editor-role-group h4 { font-size: .8rem; color: #64748b; margin-bottom: 12px; }
+.role-count-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin: 9px 0; font-size: .85rem; }
+.workshop-dialog .role-count-row input { width: 58px; text-align: center; }
+.neutral-editor { margin-top: 24px; padding-top: 20px; border-top: 1px dashed #cbd5e1; }
+.neutral-editor > label { display: flex; align-items: center; gap: 16px; }
+.workshop-dialog #neutral-slots { width: 72px; }
+.neutral-editor .hint { margin: 10px 0; text-align: left; }
+.check-list { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.check-list label { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: .87rem; cursor: pointer; }
+.rule-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 16px 0; }
+.rule-inputs label { display: grid; gap: 8px; font-size: .85rem; }
+.table-scroll { overflow-x: auto; }
+.mission-editor, .replay-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.mission-editor { min-width: 390px; }
+.mission-editor caption { text-align: left; padding: 8px 0; font-size: .8rem; color: #64748b; }
+.mission-editor th, .mission-editor td, .replay-table th, .replay-table td { padding: 10px 5px; border-bottom: 1px solid #e2e8f0; text-align: center; white-space: nowrap; }
+.mission-editor th:first-child, .replay-table th:first-child { text-align: left; }
+.workshop-dialog .mission-editor input:not([type=checkbox]) { width: 55px; text-align: center; padding: 9px 5px; }
+.event-editor { margin-top: 10px; }
+.event-option { display: flex; align-items: flex-start; gap: 12px; padding: 14px 0; border-bottom: 1px solid #e2e8f0; cursor: pointer; }
+.event-option input { margin-top: 5px !important; }
+.event-option strong { font-size: .9rem; font-weight: 500; }
+.event-option small { display: block; margin-top: 4px; color: #64748b; line-height: 1.65; font-size: .8rem; }
+.workshop-errors { padding: 20px 0; color: #42604c; line-height: 1.7; font-size: .85rem; }
+.workshop-errors.has-error { color: #b42318; }
+.workshop-actions { position: sticky; bottom: -28px; display: flex; gap: 12px; padding: 16px 0; background: #f9fbfef5; border-top: 1px solid #dbe3ee; z-index: 2; }
+.workshop-actions .btn { margin: 0; width: auto; flex: 1; padding: 12px; font-size: .88rem; }
+.reference-dialog { width: min(740px, calc(100% - 32px)); }
+.reference-section { margin: 28px 0; }
+.reference-section h3 { font-size: 1rem; padding-bottom: 12px; border-bottom: 1px solid #cbd5e1; }
+.catalog-entry { padding: 17px 0; border-bottom: 1px solid #e2e8f0; }
+.catalog-entry h4 { font-size: .97rem; font-weight: 500; margin-bottom: 6px; }
+.catalog-entry p { color: #475569; line-height: 1.85; font-size: .88rem; }
+.reference-bar { display: flex; justify-content: center; gap: 18px; flex-wrap: wrap; padding: 4px 16px; background: #f8fafcf5; border-bottom: 1px solid #dbe3ee; }
+.reference-bar button { font-size: .8rem; }
+.round-context { max-width: 620px; margin: 16px auto 0; padding: 0 22px; font-size: .82rem; line-height: 1.7; }
+.round-context strong { display: block; color: #2459a9; margin-top: 8px; }
+.round-context p { color: #475569; }
+.round-metrics { display: flex; gap: 10px; flex-wrap: wrap; color: #64748b; }
+.round-metrics span { margin-left: auto; font-weight: 700; color: #334155; }
+.skill-heading { padding: 24px 0; }
+.skill-heading h2 { font-size: 1.9rem; margin-bottom: 8px; }
+.skill-heading p, .skill-description { color: #475569; font-size: .92rem; line-height: 1.9; }
+.skill-clock { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; }
+#skill-countdown { font-size: 1.55rem; font-variant-numeric: tabular-nums; color: #2459a9; }
+#skill-progress { font-size: .85rem; color: #64748b; }
+.skill-role { display: flex; align-items: center; gap: 12px; margin: 26px 0 12px; }
+.skill-role > span { font-size: 1.75rem; }
+.skill-role h3 { font-size: 1.1rem; }
+.skill-targets { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 16px 0; }
+.skill-targets button { padding: 14px 8px; background: white; border: 1px solid #cbd5e1; border-radius: 8px; color: #334155; font: inherit; font-size: .9rem; cursor: pointer; transition: background .15s, border-color .15s; overflow-wrap: anywhere; }
+.skill-targets button[aria-pressed=true] { background: #eaf2ff; border-color: #2563eb; color: #1d4ed8; }
+.skill-actions { margin: 24px 0; }
+.skill-message { margin: 24px 0; padding: 18px 0; color: #2459a9; }
+.prediction-inputs { display: flex; gap: 16px; margin: 22px 0; }
+.prediction-inputs label { flex: 1; color: #64748b; font-size: .85rem; }
+.prediction-inputs select { display: block; width: 100%; padding: 12px 8px; background: white; border: 1px solid #cbd5e1; border-radius: 7px; margin-top: 8px; color: #334155; }
+.game-timeline { list-style: none; padding: 0; }
+.game-timeline li { display: grid; grid-template-columns: 62px 1fr; gap: 12px; padding: 16px 0; border-bottom: 1px solid #e2e8f0; font-size: .85rem; line-height: 1.8; }
+.timeline-round { color: #64748b; font-size: .75rem; padding-top: 2px; }
+.intel-line { padding: 14px 0; border-bottom: 1px solid #e2e8f0; font-size: .87rem; line-height: 1.8; }
+.replay-table small { display: block; font-weight: 400; color: #64748b; }
+.workshop-dialog .hint { text-align: left; line-height: 1.7; }
+@keyframes workshop-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 600px) {
+    .workshop-dialog { padding: 18px; width: calc(100% - 16px); max-height: 94svh; border-radius: 12px; }
+    .workshop-name-row { grid-template-columns: 1fr auto; gap: 8px; }
+    .workshop-name-row > label { grid-column: 1 / -1; font-size: .8rem; }
+    .role-editor-grid { grid-template-columns: 1fr 1fr; gap: 18px; }
+    .role-editor-grid > :last-child { grid-column: 1 / -1; }
+    .role-editor-grid > :last-child .role-count-row { max-width: 240px; }
+    .workshop-actions { bottom: -18px; gap: 7px; }
+    .workshop-actions .btn { font-size: .76rem; padding: 12px 6px; }
+    .reference-bar { gap: 8px; padding: 3px 8px; }
+    .reference-bar button { font-size: .74rem; }
+    .recipe-facts { gap: 12px; }
+    .round-metrics span { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .workshop-dialog[open], .count-tabs button, .skill-targets button { animation: none; transition: none; }
+}

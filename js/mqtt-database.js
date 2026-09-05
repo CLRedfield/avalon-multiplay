@@ -1,13 +1,14 @@
 (function initializeMqttDatabase() {
-    const TOPIC_PREFIX = 'avalon-multiplay/v4';
-    const PROTOCOL_VERSION = 2;
+    const TOPIC_PREFIX = 'avalon-multiplay/v5';
+    const PROTOCOL_VERSION = 3;
     const INITIAL_STATE_WAIT_MS = 1200;
     const REQUEST_TIMEOUT_MS = 75000;
     const HEARTBEAT_MS = 5000;
     const PEER_TIMEOUT_MS = 20000;
     const PLAYER_GRACE_MS = 15000;
     const HOST_GRACE_MS = 60000;
-    const MAX_TRANSACTION_RETRIES = 6;
+    // A full room can submit ten votes/readiness updates against the same version.
+    const MAX_TRANSACTION_RETRIES = 16;
 
     function cloneValue(value) {
         if (value === undefined) return undefined;
@@ -343,7 +344,7 @@
 
         _persistHostSecrets() {
             if (!this.roomCode || !this.playerId) return;
-            const key = `avalon_host_secrets_${this.roomCode}_${this.playerId}`;
+            const key = `avalon_host_secrets_v5_${this.brokerUrl}_${this.roomCode}_${this.playerId}`;
             try {
                 if (this.hostSecrets) localStorage.setItem(key, JSON.stringify(this.hostSecrets));
                 else localStorage.removeItem(key);
@@ -353,7 +354,7 @@
         }
 
         _restoreHostSecrets() {
-            const key = `avalon_host_secrets_${this.roomCode}_${this.playerId}`;
+            const key = `avalon_host_secrets_v5_${this.brokerUrl}_${this.roomCode}_${this.playerId}`;
             try {
                 this.hostSecrets = JSON.parse(localStorage.getItem(key) || 'null');
             } catch (error) {
@@ -459,7 +460,7 @@
         }
 
         _checkpointKey() {
-            return `avalon_checkpoint_${this.brokerUrl}_${this.roomCode}_${this.playerId}`;
+            return `avalon_checkpoint_v5_${this.brokerUrl}_${this.roomCode}_${this.playerId}`;
         }
 
         _persistCheckpoint() {
@@ -479,7 +480,7 @@
         _restoreCheckpoint() {
             try {
                 const saved = JSON.parse(localStorage.getItem(this._checkpointKey()) || 'null');
-                if (!saved?.envelope || saved.envelope.room?.code !== this.roomCode) return;
+                if (!saved?.envelope || saved.envelope.protocol !== PROTOCOL_VERSION || saved.envelope.room?.code !== this.roomCode) return;
                 this.envelope = saved.envelope;
                 this.processedRequests = new Map(saved.receipts || []);
                 if (saved.envelope.room.host === this.playerId) this.hostSecrets = saved.secrets;
@@ -1300,6 +1301,7 @@
                     let nextRoom;
                     let privateMessages = [];
                     let result = null;
+                    let nextSecrets;
 
                     if (command.type === 'action') {
                         if (!this.actionHandler) throw new Error('房主尚未加载游戏动作处理器');
@@ -1320,6 +1322,7 @@
                         });
                         if (generation !== this.connectionGeneration) return;
                         nextRoom = actionResult?.room;
+                        nextSecrets = actionResult?.secrets;
                         privateMessages = actionResult?.privateMessages || [];
                         result = actionResult?.result || null;
                         if (!nextRoom) throw new Error(actionResult?.error || '动作未获允许');
@@ -1351,6 +1354,8 @@
                         commandSignature: command.signature
                     };
                     // Record the result before any network I/O: an ACK loss must not run an action twice.
+                    // Apply private changes only after the handler and connection generation are valid.
+                    if (nextSecrets !== undefined) this.setHostSecrets(nextSecrets);
                     this.processedRequests.set(command.requestId, response);
                     this._trimReceipts();
                     this._acceptEnvelope(nextEnvelope);

@@ -1,145 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
-const vm = require('node:vm');
-const { EventEmitter } = require('node:events');
-const { webcrypto } = require('node:crypto');
-
-class FakeBroker {
-    constructor() {
-        this.clients = new Set();
-        this.retained = new Map();
-        this.filter = null;
-        this.sent = [];
-    }
-
-    connect(options) {
-        const client = new FakeClient(this, options);
-        this.clients.add(client);
-        queueMicrotask(() => {
-            client.connected = true;
-            client.emit('connect');
-        });
-        return client;
-    }
-
-    publish(topic, payload, options = {}) {
-        const buffer = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload));
-        this.sent.push({ topic, payload: buffer.toString() });
-        if (options.retain) {
-            if (buffer.length === 0) this.retained.delete(topic);
-            else this.retained.set(topic, Buffer.from(buffer));
-        }
-
-        for (const client of this.clients) {
-            if (!client.connected || !client.subscriptions.has(topic)) continue;
-            if (this.filter && !this.filter(topic, buffer, client)) continue;
-            queueMicrotask(() => client.emit('message', topic, Buffer.from(buffer)));
-        }
-    }
-}
-
-class FakeClient extends EventEmitter {
-    constructor(broker, options) {
-        super();
-        this.broker = broker;
-        this.options = options;
-        this.connected = false;
-        this.subscriptions = new Set();
-    }
-
-    subscribe(topics, options, callback) {
-        for (const topic of Array.isArray(topics) ? topics : [topics]) {
-            this.subscriptions.add(topic);
-        }
-        queueMicrotask(() => {
-            callback?.(null);
-            for (const topic of this.subscriptions) {
-                const retained = this.broker.retained.get(topic);
-                if (retained) this.emit('message', topic, Buffer.from(retained));
-            }
-        });
-    }
-
-    publish(topic, payload, options, callback) {
-        this.broker.publish(topic, payload, options);
-        queueMicrotask(() => callback?.(null));
-    }
-
-    end(force, options, callback) {
-        if (force && this.options.will) {
-            this.broker.publish(
-                this.options.will.topic,
-                this.options.will.payload,
-                this.options.will
-            );
-        }
-        this.connected = false;
-        this.broker.clients.delete(this);
-        queueMicrotask(() => callback?.());
-    }
-
-    drop() {
-        this.connected = false;
-        this.emit('offline');
-        this.emit('close');
-        this.broker.publish(this.options.will.topic, this.options.will.payload, this.options.will);
-    }
-
-    reconnect() {
-        this.connected = true;
-        this.emit('connect');
-    }
-}
-
-function createContext(fakeBroker) {
-    const storage = new Map();
-    const window = {
-        dispatchEvent() {}
-    };
-    const context = vm.createContext({
-        Buffer,
-        CustomEvent: class CustomEvent {
-            constructor(type, init = {}) {
-                this.type = type;
-                this.detail = init.detail;
-            }
-        },
-        clearTimeout,
-        console,
-        crypto: webcrypto,
-        localStorage: {
-            getItem(key) {
-                return storage.has(key) ? storage.get(key) : null;
-            },
-            setItem(key, value) {
-                storage.set(key, String(value));
-            },
-            removeItem(key) {
-                storage.delete(key);
-            }
-        },
-        mqtt: {
-            connect(url, options) {
-                assert.match(url, /^wss:\/\//);
-                return fakeBroker.connect(options);
-            }
-        },
-        queueMicrotask,
-        setTimeout,
-        window
-    });
-    window.window = window;
-    return context;
-}
-
-function loadAdapter(context) {
-    const projectRoot = path.resolve(__dirname, '..');
-    vm.runInContext(fs.readFileSync(path.join(projectRoot, 'js', 'mqtt-config.js'), 'utf8'), context);
-    vm.runInContext(fs.readFileSync(path.join(projectRoot, 'js', 'mqtt-database.js'), 'utf8'), context);
-    return context.window.MqttDatabaseAdapter;
-}
+const { FakeBroker, createContext, loadAdapter } = require('./helpers/mqtt-fixture');
 
 test('two MQTT clients create, join, transact, sync, and clear a retained room', async (t) => {
     const fakeBroker = new FakeBroker();
@@ -235,12 +96,12 @@ test('two MQTT clients create, join, transact, sync, and clear a retained room',
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.deepEqual(JSON.parse(JSON.stringify(privateMessage)), { type: 'role', roleId: 'merlin' });
 
-    const retainedState = JSON.parse(fakeBroker.retained.get('avalon-multiplay/v4/rooms/T35T/state').toString());
+    const retainedState = JSON.parse(fakeBroker.retained.get('avalon-multiplay/v5/rooms/T35T/state').toString());
     assert.ok(retainedState.stateSignature);
 
     const versionBeforeUnsignedInjection = host.envelope.version;
     fakeBroker.publish(
-        'avalon-multiplay/v4/rooms/T35T/state',
+        'avalon-multiplay/v5/rooms/T35T/state',
         JSON.stringify({
             protocol: retainedState.protocol,
             version: versionBeforeUnsignedInjection + 100,
@@ -260,7 +121,7 @@ test('two MQTT clients create, join, transact, sync, and clear a retained room',
     const clearResult = await guest.ref(roomPath).transaction(() => null);
     assert.equal(clearResult.committed, true);
     assert.equal((await guest.ref(roomPath).once('value')).exists(), false);
-    assert.equal(fakeBroker.retained.has('avalon-multiplay/v4/rooms/T35T/state'), true);
+    assert.equal(fakeBroker.retained.has('avalon-multiplay/v5/rooms/T35T/state'), true);
 
     await secondGuest.disconnectRoom();
     await guest.disconnectRoom();
@@ -384,7 +245,7 @@ test('host refresh restores an atomic checkpoint and receipts after lost broker 
     await restored._handleCommand(command);
     assert.equal(restored.envelope.room.game.count, 1);
     assert.equal(restored.envelope.room.host, 'host');
-    assert.ok(broker.retained.has('avalon-multiplay/v4/rooms/RCVR/state'));
+    assert.ok(broker.retained.has('avalon-multiplay/v5/rooms/RCVR/state'));
 });
 
 test('old-round commands and forged responses cannot change a later round', async (t) => {
@@ -401,7 +262,7 @@ test('old-round commands and forged responses cannot change a later round', asyn
     const rejected = assert.rejects(pending, /阶段已变化/);
     await until(() => savedCommand);
     broker.publish(savedCommand.replyTopic, JSON.stringify({ requestId: savedCommand.requestId, ok: true, envelope: {
-        protocol: 2, version: 9999, room: { host: 'attacker' }
+        protocol: 3, version: 9999, room: { host: 'attacker' }
     } }));
     await delay(20);
     assert.ok(guest.pendingRequests.has(savedCommand.requestId));
@@ -423,7 +284,7 @@ test('heartbeats do not churn room versions and old sockets cannot disconnect a 
     guest.transportId = 'new-transport';
     await guest._announcePresence('online');
     await until(() => host.envelope.room.players.guest.transportId === 'new-transport');
-    const body = { protocol: 2, type: 'offline', roomCode: 'RCVR', playerId: 'guest', transportId: oldTransport, at: Date.now() };
+    const body = { protocol: 3, type: 'offline', roomCode: 'RCVR', playerId: 'guest', transportId: oldTransport, at: Date.now() };
     await host._handlePresence({ ...body, signature: await guest._signValue(body) });
     assert.equal(host.offlineTimers.has('guest'), false);
     assert.equal(host.envelope.room.players.guest.connected, true);
